@@ -14,20 +14,50 @@ from ..utils.sftp.provider import Sftp
 
 @dataclass(kw_only=True)
 class SftpLinkedServiceSettings(LinkedServiceSettings):
-    """
-    Settings for SFTP Linked Service connections.
+    """Settings for SFTP Linked Service connections.
+
+    Attributes:
+        host (str): SFTP server hostname.
+        username (str): Username for authentication.
+        password (str | None): Password for authentication.
+        encrypted_credential (str): Encrypted credential.
+        private_key (str | None): Private key for authentication.
+        passphrase (str | None): Passphrase for private key.
+        timeout (float | None): Connection timeout in seconds.
+        host_key_fingerprint (str | None): Expected host key fingerprint.
+        host_key_validation (bool): Whether to validate host key.
+        port (int): SFTP server port.
     """
 
     host: str
+    """Hostname or IP address of the SFTP server."""
+
     username: str
+    """Username for authentication."""
+
     password: str | None = None
+    """Password for authentication."""
+
     encrypted_credential: str
+    """Encrypted credential."""
+
     private_key: str | None = None
+    """Private key for authentication."""
+
     passphrase: str | None = None
+    """Passphrase for private key."""
+
     timeout: float | None = None
+    """Connection timeout in seconds."""
+
     host_key_fingerprint: str | None = None
+    """Expected host key fingerprint."""
+
     host_key_validation: bool = True
+    """Whether to validate host key."""
+
     port: int = 22
+    """SFTP server port."""
 
 
 SftpLinkedServiceSettingsType = TypeVar("SftpLinkedServiceSettingsType", bound=SftpLinkedServiceSettings)
@@ -38,8 +68,12 @@ class SftpLinkedService(
     LinkedService[SftpLinkedServiceSettingsType],
     Generic[SftpLinkedServiceSettingsType],
 ):
-    """
-    Docstring for SftpLinkedService
+    """SFTP Linked Service implementation.
+
+    Attributes:
+        settings (SftpLinkedServiceSettingsType): Linked service settings.
+        _connection (SFTPClient | None): Underlying SFTP client connection.
+        _sftp (Sftp | None): Sftp provider instance.
     """
 
     settings: SftpLinkedServiceSettingsType
@@ -49,21 +83,22 @@ class SftpLinkedService(
 
     @property
     def type(self) -> ResourceType:
-        """
-        Function for getting type of linked service.
+        """Get the type of linked service.
 
-        :param self: Description
-        :return: Description
-        :rtype: ResourceType
+        Returns:
+            ResourceType: The type of the linked service.
         """
         return ResourceType.LINKED_SERVICE
 
     @property
     def connection(self) -> SFTPClient:
-        """
-        Get the connection.
+        """Get the SFTP client connection.
+
         Returns:
-            SFTPClient: The connection.
+            SFTPClient: The active SFTP client connection.
+
+        Raises:
+            ConnectionError: If the connection is not initialized.
         """
         if self._connection is None:
             raise ConnectionError(
@@ -78,15 +113,10 @@ class SftpLinkedService(
         return self._connection
 
     def _init_sftp(self) -> Sftp:
-        """
-        Initialise the Sftp client instance with SftpConfig.
+        """Initialise the Sftp client instance with SftpConfig.
 
-        Creates an Sftp instance with:
-        - SftpConfig using settings from SftpLinkedServiceSettings.
-
-        :param self: Description
-        :return: Description
-        :rtype: Sftp
+        Returns:
+            Sftp: An initialized Sftp provider instance.
         """
         config = SftpConfig(
             pkey=self.settings.private_key,
@@ -96,13 +126,15 @@ class SftpLinkedService(
         return Sftp(config=config)
 
     def connect(self) -> None:
-        """
-        Initializes the Sftp client instance if not already initialized.
+        """Initialize the Sftp client instance if not already initialized.
+
+        Raises:
+            ConnectionError: If connection fails.
         """
         if self._sftp is None:
             self._sftp = self._init_sftp()
 
-        self._sftp.connect(
+        self._connection = self._sftp.connect(
             host=self.settings.host,
             port=self.settings.port,
             username=self.settings.username,
@@ -110,14 +142,16 @@ class SftpLinkedService(
             passphrase=self.settings.passphrase,
             host_key_fingerprint=self.settings.host_key_fingerprint,
         )
-        self._connection = self._sftp._client
 
     def test_connection(self) -> tuple[bool, str]:
-        """
-        Perform a lightweight health check against the SFTP backend.
+        """Perform a lightweight health check against the SFTP backend.
+
         Uses getcwd to verify connectivity without modifying data.
+
         Returns:
-            tuple[bool, str]: (True, message) if successful, (False, error message) otherwise.
+            tuple[bool, str]:
+                - (True, message) if successful.
+                - (False, error message) otherwise.
         """
         try:
             if self._sftp is None:
@@ -132,9 +166,12 @@ class SftpLinkedService(
             return False, str(exc)
 
     def close(self) -> None:
-        """
-        Close the linked service.
+        """Close the linked service.
+
         Always set _sftp and _connection to None, even if exceptions are raised.
+
+        Raises:
+            ConnectionError: If closing the SFTP connection fails.
         """
         sftp_exc = None
         conn_exc = None

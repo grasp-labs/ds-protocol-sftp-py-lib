@@ -36,9 +36,10 @@ def make_settings():
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
 def test_connect_sets_connection(mock_sftp):
-    """Verify that connect method sets the _connection attribute."""
+    """Verify that connect method sets the _connection attribute from the provider's connect return value."""
     mock_instance = MagicMock()
-    mock_instance._client = MagicMock()
+    mock_client = MagicMock()
+    mock_instance.connect.return_value = mock_client
     mock_sftp.return_value = mock_instance
     svc = SftpLinkedService(
         id="test_id",
@@ -47,7 +48,7 @@ def test_connect_sets_connection(mock_sftp):
         settings=make_settings(),
     )
     svc.connect()
-    assert svc._connection is mock_instance._client
+    assert svc._connection is mock_client
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
