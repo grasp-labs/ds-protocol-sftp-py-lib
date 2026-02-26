@@ -268,3 +268,42 @@ def test_ssh_property():
     """Verify that ssh property returns a valid SSHClient instance."""
     sftp = Sftp()
     assert sftp.ssh is not None
+
+
+@patch("paramiko.SSHClient")
+def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
+    """Verify connect closes resources and raises ConnectionError if host_key_validation is enabled but fingerprint is missing."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.close = MagicMock()
+    sftp._config.host_key_validation = True
+    with pytest.raises(ConnectionError) as excinfo:
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+    sftp.close.assert_called_once()
+    assert "no fingerprint" in str(excinfo.value)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_host_key_validation_fingerprint_mismatch_closes(mock_ssh):
+    """Verify connect closes resources and raises ConnectionError if fingerprint does not match."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_key = MagicMock()
+    mock_key.get_fingerprint.return_value = b"wrong"
+    mock_transport.get_remote_server_key.return_value = mock_key
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.close = MagicMock()
+    sftp._config.host_key_validation = True
+    with pytest.raises(ConnectionError) as excinfo:
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching")
+    sftp.close.assert_called_once()
+    assert "fingerprint validation failed" in str(excinfo.value)

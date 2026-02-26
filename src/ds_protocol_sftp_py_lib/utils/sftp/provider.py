@@ -1,7 +1,7 @@
 import base64
 import fnmatch
 import io
-import os
+import posixpath
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +13,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
 )
 from paramiko import SFTPAttributes, ssh_exception
 
-from ...utils.sftp.config import SftpConfig
+from .config import SftpConfig
 
 logger = Logger.get_logger(__name__, package=True)
 
@@ -85,11 +85,22 @@ class Sftp:
             )
 
         if self._config.host_key_validation:
+            if host_key_fingerprint is None:
+                self.close()
+                raise ConnectionError(
+                    message="Host key validation is enabled but no fingerprint was provided.",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                    },
+                )
             key = transport.get_remote_server_key()
             encoded_fingerprint = base64.b64encode(key.get_fingerprint()).decode("utf-8")
 
             # Verify the server's fingerprint.
             if encoded_fingerprint != host_key_fingerprint:
+                self.close()
                 raise ConnectionError(
                     message="Host key fingerprint validation failed.",
                     details={
@@ -151,15 +162,16 @@ class Sftp:
     def move(self, old_path: str, new_path: str) -> None:
         """
         Rename/move a file on the remote SFTP server.
+        Uses POSIX path handling for remote paths.
         """
         logger.info(f"Moving file from {old_path} to {new_path}.")
         if self._client is None:
             raise ConnectionError(message="Not Connected to SFTP.", details={"old_path": old_path, "new_path": new_path})
-        directory, pattern = os.path.split(old_path)
+        directory, pattern = posixpath.split(old_path)
         matching_files = self.get_files_by_pattern(directory, pattern)
         for file in matching_files:
-            source_path = f"{directory}/{file.filename}"
-            destination_path = f"{new_path}/{file.filename}"
+            source_path = posixpath.join(directory, file.filename)
+            destination_path = posixpath.join(new_path, file.filename)
             self._client.rename(source_path, destination_path)
             logger.info(f"Moved {source_path} to {destination_path}")
 
