@@ -2,7 +2,7 @@ import base64
 import fnmatch
 import io
 import posixpath
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import paramiko
@@ -21,39 +21,94 @@ logger = Logger.get_logger(__name__, package=True)
 @dataclass(kw_only=True)
 class Sftp:
     """
-    Docstring for Sftp
+    High-level wrapper around :class:`paramiko.SFTPClient` for interacting with an SFTP
+    server using SSH.
+
+    The class manages the underlying :class:`paramiko.SSHClient` and SFTP session, and
+    provides convenience methods for connecting, listing directories, moving files and
+    accessing the raw SSH/SFTP clients when needed.
+
+    A :class:`SftpConfig` instance can be supplied to customize connection behavior
+    (for example, host key policies). An existing :class:`paramiko.SFTPClient` can be
+    injected for cases where the SSH/SFTP session is created externally.
+
+    This class is also a context manager and can be used with ``with`` statements to
+    automatically close the underlying SSH/SFTP connections.
+
+    Basic usage::
+
+        from ds_protocol_sftp_py_lib.utils.sftp.config import SftpConfig
+        from ds_protocol_sftp_py_lib.utils.sftp.provider import Sftp
+
+        config = SftpConfig()
+
+        # Using explicit connect/close
+        sftp = Sftp(config=config)
+        client = sftp.connect(
+            host="sftp.example.com",
+            port=22,
+            username="user",
+            password="secret",
+            passphrase=None,
+            host_key_fingerprint=None,
+        )
+        files = sftp.list_directory("/remote/path")
+        sftp.close()
+
+        # Using as a context manager
+        with Sftp(config=config) as sftp:
+            client = sftp.connect(
+                host="sftp.example.com",
+                port=22,
+                username="user",
+                password="secret",
+                passphrase=None,
+                host_key_fingerprint=None,
+            )
+            files = sftp.list_directory("/remote/path")
     """
 
-    def __init__(self, config: SftpConfig | None = None, client: paramiko.SFTPClient | None = None):
-        self._config = config or SftpConfig()
-        self._client: paramiko.SFTPClient | None = client
-        self._ssh = paramiko.SSHClient()
-        self._ssh.set_missing_host_key_policy(self._config.policy)
+    config: SftpConfig = field(default_factory=SftpConfig)
+    _ssh: paramiko.SSHClient = field(init=False, default_factory=paramiko.SSHClient)
+    _client: paramiko.SFTPClient | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self._ssh.set_missing_host_key_policy(self.config.policy)
 
     def connect(
         self, host: str, port: int, username: str, password: str | None, passphrase: str | None, host_key_fingerprint: str | None
     ) -> paramiko.SFTPClient:
         """
-        Connect to the SFTP server and return the SFTP client.
+        Establish and return an active SFTP client connection to the remote server.
 
-        :param self: Description
-        :param host: Description
-        :type host: str
-        :param port: Description
-        :type port: int
-        :param username: Description
-        :type username: str
-        :param password: Description
-        :type password: str
+        The connection may use password authentication, private key authentication (with optional passphrase),
+        or a combination, depending on the configuration. If host key validation is enabled, the remote server's
+        host key fingerprint is validated against the provided fingerprint.
+
+        Args:
+            host (str): Hostname or IP address of the SFTP server.
+            port (int): Port number to connect to (typically 22).
+            username (str): Username for authentication.
+            password (str | None): Password for authentication, or None if using only key-based auth.
+            passphrase (str | None): Passphrase for the private key, if required.
+            host_key_fingerprint (str | None): Expected base64-encoded host key fingerprint for validation.
+                Required if host key validation is enabled.
+
+        Returns:
+            paramiko.SFTPClient: An active SFTP client connection.
+
+        Raises:
+            AuthenticationError: If authentication fails or SSH transport is unavailable.
+            ConnectionError: For network errors, host key validation failures, or other connection issues.
         """
         pkey = None
-        if self._config.pkey:
-            pkey = self._load_private_key(private_key=self._config.pkey, passphrase=passphrase)
+        if self.config.pkey:
+            pkey = self._load_private_key(private_key=self.config.pkey, passphrase=passphrase)
 
         try:
             logger.info(f"Connecting to {host}")
             self._ssh.connect(
-                hostname=host, port=port, username=username, password=password, pkey=pkey, timeout=self._config.timeout
+                hostname=host, port=port, username=username, password=password, pkey=pkey, timeout=self.config.timeout
             )
         except ssh_exception.AuthenticationException as exc:
             logger.error(f"Failed to authenticate to host: {host}: {exc}")
@@ -75,8 +130,9 @@ class Sftp:
         # Get servers host key.
         transport = self._ssh.get_transport()
         if not transport:
+            self.close()
             raise AuthenticationError(
-                message="Failed to get the server's host key.",
+                message="SSH transport not available.",
                 details={
                     "host": host,
                     "username": username,
@@ -84,7 +140,7 @@ class Sftp:
                 },
             )
 
-        if self._config.host_key_validation:
+        if self.config.host_key_validation:
             if host_key_fingerprint is None:
                 self.close()
                 raise ConnectionError(
@@ -117,12 +173,17 @@ class Sftp:
 
     def _load_private_key(self, private_key: str, passphrase: str | None) -> paramiko.PKey:
         """
-        Function to load and return the RSA Private Key.
+        Load and return an RSA private key for SFTP authentication.
 
-        :param self: Description
-        more params
-        :return: Description
-        :rtype: PKey
+        Args:
+            private_key (str): The private key in PEM format as a string.
+            passphrase (str | None): Passphrase for the private key, if required.
+
+        Returns:
+            paramiko.PKey: The loaded RSA private key object.
+
+        Raises:
+            AuthenticationError: If the private key cannot be loaded (invalid format, wrong passphrase, etc).
         """
         key_file = io.StringIO(private_key)
 
@@ -205,4 +266,6 @@ class Sftp:
         if self._client is not None:
             self._client.close()
             self._client = None
-        self._ssh.close()
+        if self._ssh is not None:
+            self._ssh.close()
+            self._ssh = paramiko.SSHClient()

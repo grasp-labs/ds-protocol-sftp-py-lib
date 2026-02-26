@@ -9,7 +9,7 @@ description = "A Python package from the DS library collection"
 dependencies = [
     "ds-resource-plugin-py-lib>=0.1.0b1,<1.0.0",
     "ds-common-logger-py-lib>=0.1.0a5,<1.0.0",
-    "paramiko>=3.0.0,<=4.0.0",
+    "paramiko>=3.0.0,<4.0.0",
 ]
 requires-python = ">=3.11"
 license = "Apache-2.0"

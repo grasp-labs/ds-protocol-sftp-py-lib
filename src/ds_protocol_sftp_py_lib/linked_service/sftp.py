@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
+from ds_common_logger_py_lib import Logger
 from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedService, LinkedServiceSettings
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
@@ -10,6 +11,8 @@ from paramiko import SFTPClient
 from ..enums import ResourceType
 from ..utils.sftp.config import SftpConfig
 from ..utils.sftp.provider import Sftp
+
+logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)
@@ -113,7 +116,7 @@ class SftpLinkedService(
         return self._connection
 
     def _init_sftp(self) -> Sftp:
-        """Initialise the Sftp client instance with SftpConfig.
+        """Initialize the Sftp client instance with SftpConfig.
 
         Returns:
             Sftp: An initialized Sftp provider instance.
@@ -131,6 +134,10 @@ class SftpLinkedService(
         Raises:
             ConnectionError: If connection fails.
         """
+        if self._connection is not None:
+            logger.info(f"Already connected to {self.settings.host}. Establishing a new connection.")
+            self.close()
+
         if self._sftp is None:
             self._sftp = self._init_sftp()
 
