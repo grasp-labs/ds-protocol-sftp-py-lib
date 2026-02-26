@@ -93,7 +93,7 @@ def test_move_calls_rename(mock_sftp_client):
 
 def test_list_directory_raises_connection_error():
     """Verify list_directory raises ConnectionError when client is not connected."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._client = None
     with pytest.raises(ConnectionError):
         sftp.list_directory("/tmp")
@@ -101,7 +101,7 @@ def test_list_directory_raises_connection_error():
 
 def test_client_property_raises_connection_error():
     """Verify client property raises ConnectionError when client is not connected."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._client = None
     with pytest.raises(ConnectionError):
         _ = sftp.client
@@ -109,7 +109,7 @@ def test_client_property_raises_connection_error():
 
 def test_move_raises_connection_error():
     """Verify move method raises ConnectionError when client is not connected."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._client = None
     with pytest.raises(ConnectionError):
         sftp.move("/tmp/test.txt", "/newtmp")
@@ -117,7 +117,7 @@ def test_move_raises_connection_error():
 
 def test_load_private_key_raises_authentication_error():
     """Verify that _load_private_key raises AuthenticationError when given an invalid key."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     # Invalid key string
     invalid_key = "not-a-valid-key"
     with pytest.raises(AuthenticationError):
@@ -133,8 +133,7 @@ def test_connect_success(mock_ssh):
     mock_ssh_instance.get_transport.return_value = mock_transport
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
-    sftp._config.host_key_validation = False  # skip fingerprint check
+    sftp = Sftp(config=SftpConfig(host_key_validation=False))
     result = sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
     assert result is not None
 
@@ -145,7 +144,7 @@ def test_connect_authentication_error(mock_ssh):
     mock_ssh_instance = MagicMock()
     mock_ssh_instance.connect.side_effect = AuthenticationException("fail")
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig(host_key_validation=False))
     with pytest.raises(AuthenticationError):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
 
@@ -157,7 +156,7 @@ def test_connect_transport_missing(mock_ssh):
     mock_ssh_instance.get_transport.return_value = None
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     with pytest.raises(AuthenticationError):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
 
@@ -173,8 +172,7 @@ def test_connect_host_key_validation_failure(mock_ssh):
     mock_ssh_instance.get_transport.return_value = mock_transport
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
-    sftp._config.host_key_validation = True
+    sftp = Sftp(config=SftpConfig(host_key_validation=True))
     with pytest.raises(ConnectionError):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching")
 
@@ -185,7 +183,7 @@ def test_connect_general_exception(mock_ssh):
     mock_ssh_instance = MagicMock()
     mock_ssh_instance.connect.side_effect = Exception("network fail")
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     with pytest.raises(ConnectionError) as excinfo:
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
     assert "network fail" in str(excinfo.value)
@@ -200,7 +198,7 @@ def test_connect_with_pkey(mock_ssh):
     mock_ssh_instance.get_transport.return_value = mock_transport
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._config.pkey = "dummy-key"
     sftp._config.host_key_validation = False
     # Patch _load_private_key to avoid real key parsing
@@ -236,7 +234,7 @@ def test_connect_host_key_validation_success(mock_ssh):
 
 def test_load_private_key_authentication_error_branch():
     """Verify _load_private_key raises AuthenticationError for invalid key (branch coverage)."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     # This will hit the except branch in _load_private_key
     with pytest.raises(AuthenticationError):
         sftp._load_private_key(private_key="invalid-key", passphrase="badpass")
@@ -245,7 +243,7 @@ def test_load_private_key_authentication_error_branch():
 @patch("paramiko.SFTPClient")
 def test_move_branch(mock_sftp_client):
     """Verify move covers branch where no files match pattern (branch coverage)."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._client = MagicMock()
     sftp._client.listdir_attr.return_value = []
     sftp.get_files_by_pattern = MagicMock(return_value=[])
@@ -258,7 +256,7 @@ def test_move_branch(mock_sftp_client):
 @patch("paramiko.SFTPClient")
 def test_close_no_client(mock_sftp_client):
     """Verify close does not raise if _client is None (branch coverage)."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     sftp._client = None
     sftp._ssh = MagicMock()
     sftp.close()  # Should not raise
@@ -266,7 +264,7 @@ def test_close_no_client(mock_sftp_client):
 
 def test_ssh_property():
     """Verify that ssh property returns a valid SSHClient instance."""
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig())
     assert sftp.ssh is not None
 
 
@@ -278,7 +276,7 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
     mock_ssh_instance.get_transport.return_value = mock_transport
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig(host_key_validation=True))
     sftp._ssh = mock_ssh_instance
     sftp.close = MagicMock()
     sftp._config.host_key_validation = True
@@ -299,7 +297,7 @@ def test_connect_host_key_validation_fingerprint_mismatch_closes(mock_ssh):
     mock_ssh_instance.get_transport.return_value = mock_transport
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
-    sftp = Sftp()
+    sftp = Sftp(config=SftpConfig(host_key_validation=True))
     sftp._ssh = mock_ssh_instance
     sftp.close = MagicMock()
     sftp._config.host_key_validation = True

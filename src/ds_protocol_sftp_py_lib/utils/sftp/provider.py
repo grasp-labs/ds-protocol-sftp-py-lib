@@ -2,7 +2,6 @@ import base64
 import fnmatch
 import io
 import posixpath
-from dataclasses import dataclass, field
 from typing import Any
 
 import paramiko
@@ -18,7 +17,6 @@ from .config import SftpConfig
 logger = Logger.get_logger(__name__, package=True)
 
 
-@dataclass(kw_only=True)
 class Sftp:
     """
     High-level wrapper around :class:`paramiko.SFTPClient` for interacting with an SFTP
@@ -68,12 +66,11 @@ class Sftp:
             files = sftp.list_directory("/remote/path")
     """
 
-    config: SftpConfig = field(default_factory=SftpConfig)
-    _ssh: paramiko.SSHClient = field(init=False, default_factory=paramiko.SSHClient)
-    _client: paramiko.SFTPClient | None = field(init=False, default=None)
-
-    def __post_init__(self) -> None:
-        self._ssh.set_missing_host_key_policy(self.config.policy)
+    def __init__(self, config: SftpConfig | None = None, client: paramiko.SFTPClient | None = None):
+        self._config = config or SftpConfig()
+        self._client: paramiko.SFTPClient | None = client
+        self._ssh = paramiko.SSHClient()
+        self._ssh.set_missing_host_key_policy(self._config.policy)
 
     def connect(
         self, host: str, port: int, username: str, password: str | None, passphrase: str | None, host_key_fingerprint: str | None
@@ -102,13 +99,13 @@ class Sftp:
             ConnectionError: For network errors, host key validation failures, or other connection issues.
         """
         pkey = None
-        if self.config.pkey:
-            pkey = self._load_private_key(private_key=self.config.pkey, passphrase=passphrase)
+        if self._config.pkey:
+            pkey = self._load_private_key(private_key=self._config.pkey, passphrase=passphrase)
 
         try:
             logger.info(f"Connecting to {host}")
             self._ssh.connect(
-                hostname=host, port=port, username=username, password=password, pkey=pkey, timeout=self.config.timeout
+                hostname=host, port=port, username=username, password=password, pkey=pkey, timeout=self._config.timeout
             )
         except ssh_exception.AuthenticationException as exc:
             logger.error(f"Failed to authenticate to host: {host}: {exc}")
@@ -140,7 +137,7 @@ class Sftp:
                 },
             )
 
-        if self.config.host_key_validation:
+        if self._config.host_key_validation:
             if host_key_fingerprint is None:
                 self.close()
                 raise ConnectionError(
