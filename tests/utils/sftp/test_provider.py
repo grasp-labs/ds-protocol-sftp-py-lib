@@ -305,3 +305,43 @@ def test_connect_host_key_validation_fingerprint_mismatch_closes(mock_ssh):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching")
     sftp.close.assert_called_once()
     assert "fingerprint validation failed" in str(excinfo.value)
+
+
+def test_load_private_key_success(monkeypatch):
+    """Covers: _load_private_key success branch (returns pkey)."""
+    sftp = Sftp(config=SftpConfig())
+
+    class DummyPKey:
+        pass
+
+    def dummy_from_private_key(file_obj, password=None):
+        return DummyPKey()
+
+    monkeypatch.setattr("paramiko.RSAKey.from_private_key", dummy_from_private_key)
+    result = sftp._load_private_key(private_key="dummy", passphrase=None)
+    assert isinstance(result, DummyPKey)
+
+
+def test_client_property_success():
+    """Covers: client property when _client is set."""
+    sftp = Sftp(config=SftpConfig())
+    dummy_client = object()
+    sftp._client = dummy_client
+    assert sftp.client is dummy_client
+
+
+def test_enter_returns_self():
+    """Covers: __enter__ returns self."""
+    sftp = Sftp(config=SftpConfig())
+    with sftp as s:
+        assert s is sftp
+
+
+def test_close_only_ssh():
+    """Covers: close() when only _ssh is set (not _client)."""
+    sftp = Sftp(config=SftpConfig())
+    sftp._client = None
+    mock_ssh = MagicMock()
+    sftp._ssh = mock_ssh
+    sftp.close()
+    mock_ssh.close.assert_called_once()
