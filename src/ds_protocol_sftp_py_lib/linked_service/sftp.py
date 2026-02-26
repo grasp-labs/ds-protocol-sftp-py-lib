@@ -5,6 +5,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedServi
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
 )
+from paramiko import SFTPClient
 
 from ..enums import ResourceType
 from ..utils.sftp.config import SftpConfig
@@ -43,7 +44,7 @@ class SftpLinkedService(
 
     settings: SftpLinkedServiceSettingsType
 
-    _session: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
+    _connection: SFTPClient | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
     _sftp: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
 
     @property
@@ -58,18 +59,23 @@ class SftpLinkedService(
         return ResourceType.LINKED_SERVICE
 
     @property
-    def session(self) -> Sftp:
+    def connection(self) -> SFTPClient:
         """
-        Get the session.
+        Get the connection.
         Returns:
-            Sftp: The session.
+            SFTPClient: The connection.
         """
-        if self._session is None:
+        if self._connection is None:
             raise ConnectionError(
-                message="Session is not initialized",
-                details={"type": self.type.value},
+                message="Connection is not initialized",
+                details={
+                    "host": self.settings.host,
+                    "username": self.settings.username,
+                    "port": self.settings.port,
+                    "type": self.type.value,
+                },
             )
-        return self._session
+        return self._connection
 
     def _init_sftp(self) -> Sftp:
         """
@@ -104,20 +110,24 @@ class SftpLinkedService(
             passphrase=self.settings.passphrase,
             host_key_fingerprint=self.settings.host_key_fingerprint,
         )
-        self._session = self._sftp
+        self._connection = self._sftp._client
 
     def test_connection(self) -> tuple[bool, str]:
         """
-        Test the connection to the SFTP Server.
-
+        Perform a lightweight health check against the SFTP backend.
+        Uses getcwd to verify connectivity without modifying data.
         Returns:
-            tuple[bool, str]: A tuple containing a boolean indicating success and a string message.
+            tuple[bool, str]: (True, message) if successful, (False, error message) otherwise.
         """
         try:
             if self._sftp is None:
                 self.connect()
-            self.session.list_directory(".")
-            return True, "Connection successfully tested"
+            # Lightweight health check: get current working directory
+            cwd = self.connection.getcwd()
+            if cwd is not None:
+                return True, "Connection successfully tested"
+            else:
+                return False, "Could not get current working directory"
         except Exception as exc:
             return False, str(exc)
 
@@ -126,4 +136,31 @@ class SftpLinkedService(
         Close the linked service.
         """
         if self._sftp:
-            self._sftp.close()
+            try:
+                self._sftp.close()
+            except Exception as exc:
+                raise ConnectionError(
+                    message="Failed to close SFTP connection",
+                    details={
+                        "host": self.settings.host,
+                        "username": self.settings.username,
+                        "port": self.settings.port,
+                        "type": self.type.value,
+                    },
+                ) from exc
+            self._sftp = None
+
+        if self._connection:
+            try:
+                self._connection.close()
+            except Exception as exc:
+                raise ConnectionError(
+                    message="Failed to close SFTP connection",
+                    details={
+                        "host": self.settings.host,
+                        "username": self.settings.username,
+                        "port": self.settings.port,
+                        "type": self.type.value,
+                    },
+                ) from exc
+            self._connection = None
