@@ -134,33 +134,33 @@ class SftpLinkedService(
     def close(self) -> None:
         """
         Close the linked service.
+        Always set _sftp and _connection to None, even if exceptions are raised.
         """
+        sftp_exc = None
+        conn_exc = None
         if self._sftp:
             try:
                 self._sftp.close()
             except Exception as exc:
-                raise ConnectionError(
-                    message="Failed to close SFTP connection",
-                    details={
-                        "host": self.settings.host,
-                        "username": self.settings.username,
-                        "port": self.settings.port,
-                        "type": self.type.value,
-                    },
-                ) from exc
-            self._sftp = None
+                sftp_exc = exc
+            finally:
+                self._sftp = None
 
         if self._connection:
             try:
                 self._connection.close()
             except Exception as exc:
-                raise ConnectionError(
-                    message="Failed to close SFTP connection",
-                    details={
-                        "host": self.settings.host,
-                        "username": self.settings.username,
-                        "port": self.settings.port,
-                        "type": self.type.value,
-                    },
-                ) from exc
-            self._connection = None
+                conn_exc = exc
+            finally:
+                self._connection = None
+
+        if sftp_exc or conn_exc:
+            raise ConnectionError(
+                message="Failed to close SFTP connection",
+                details={
+                    "host": self.settings.host,
+                    "username": self.settings.username,
+                    "port": self.settings.port,
+                    "type": self.type.value,
+                },
+            ) from sftp_exc or conn_exc

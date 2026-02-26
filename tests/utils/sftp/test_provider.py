@@ -10,12 +10,17 @@ Covers:
 - Idempotency of close method.
 - Directory listing and file retrieval methods calling the underlying client correctly.
 - Move method invoking the client's rename functionality.
+- Error handling for list_directory, client property, move, and private key loading.
+- Sftp.connect: success, authentication error, transport missing, host key validation failure.
+- Context manager (__enter__, __exit__) and close method.
+- SSH property access.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import AuthenticationError, ConnectionError
+from paramiko.ssh_exception import AuthenticationException
 
 from ds_protocol_sftp_py_lib.utils.sftp.config import SftpConfig
 from ds_protocol_sftp_py_lib.utils.sftp.provider import Sftp
@@ -87,6 +92,7 @@ def test_move_calls_rename(mock_sftp_client):
 
 
 def test_list_directory_raises_connection_error():
+    """Verify list_directory raises ConnectionError when client is not connected."""
     sftp = Sftp()
     sftp._client = None
     with pytest.raises(ConnectionError):
@@ -94,6 +100,7 @@ def test_list_directory_raises_connection_error():
 
 
 def test_client_property_raises_connection_error():
+    """Verify client property raises ConnectionError when client is not connected."""
     sftp = Sftp()
     sftp._client = None
     with pytest.raises(ConnectionError):
@@ -101,6 +108,7 @@ def test_client_property_raises_connection_error():
 
 
 def test_move_raises_connection_error():
+    """Verify move method raises ConnectionError when client is not connected."""
     sftp = Sftp()
     sftp._client = None
     with pytest.raises(ConnectionError):
@@ -108,8 +116,86 @@ def test_move_raises_connection_error():
 
 
 def test_load_private_key_raises_authentication_error():
+    """Verify that _load_private_key raises AuthenticationError when given an invalid key."""
     sftp = Sftp()
     # Invalid key string
     invalid_key = "not-a-valid-key"
     with pytest.raises(AuthenticationError):
         sftp._load_private_key(private_key=invalid_key, passphrase=None)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_success(mock_ssh):
+    """Verify that connect successfully establishes a connection and sets the client."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_transport.get_remote_server_key.return_value = MagicMock()
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._config.host_key_validation = False  # skip fingerprint check
+    result = sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+    assert result is not None
+
+
+@patch("paramiko.SSHClient")
+def test_connect_authentication_error(mock_ssh):
+    """Verify that connect raises AuthenticationError when SSH connection fails."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh_instance.connect.side_effect = AuthenticationException("fail")
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    with pytest.raises(AuthenticationError):
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_transport_missing(mock_ssh):
+    """Verify that connect raises AuthenticationError when transport is missing after connection."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh_instance.get_transport.return_value = None
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    with pytest.raises(AuthenticationError):
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_host_key_validation_failure(mock_ssh):
+    """Verify that connect raises ConnectionError when host key fingerprint does not match."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_key = MagicMock()
+    mock_key.get_fingerprint.return_value = b"wrong"
+    mock_transport.get_remote_server_key.return_value = mock_key
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._config.host_key_validation = True
+    with pytest.raises(ConnectionError):
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching")
+
+
+def test_load_private_key_authentication_error():
+    """Verify that _load_private_key raises AuthenticationError when key loading fails."""
+    sftp = Sftp()
+    with pytest.raises(AuthenticationError):
+        sftp._load_private_key(private_key="invalid", passphrase=None)
+
+
+@patch("paramiko.SSHClient")
+def test_enter_exit_calls_close(mock_ssh):
+    sftp = Sftp()
+    sftp.close = MagicMock()
+    with sftp:
+        pass
+    sftp.close.assert_called_once()
+
+
+def test_ssh_property():
+    """Verify that ssh property returns a valid SSHClient instance."""
+    sftp = Sftp()
+    assert sftp.ssh is not None

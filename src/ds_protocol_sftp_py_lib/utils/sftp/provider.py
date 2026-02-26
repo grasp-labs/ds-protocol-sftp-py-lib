@@ -46,6 +46,7 @@ class Sftp:
         :param password: Description
         :type password: str
         """
+        pkey = None
         if self._config.pkey:
             pkey = self._load_private_key(private_key=self._config.pkey, passphrase=passphrase)
 
