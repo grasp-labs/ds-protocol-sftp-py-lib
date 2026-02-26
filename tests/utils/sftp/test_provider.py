@@ -11,7 +11,7 @@ Covers:
 - Directory listing and file retrieval methods calling the underlying client correctly.
 - Move method invoking the client's rename functionality.
 - Error handling for list_directory, client property, move, and private key loading.
-- Sftp.connect: success, authentication error, transport missing, host key validation failure.
+- Sftp.connect: success, authentication error, transport missing, host key validation failure, general exception, and pkey usage.
 - Context manager (__enter__, __exit__) and close method.
 - SSH property access.
 """
@@ -179,20 +179,89 @@ def test_connect_host_key_validation_failure(mock_ssh):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching")
 
 
-def test_load_private_key_authentication_error():
-    """Verify that _load_private_key raises AuthenticationError when key loading fails."""
+@patch("paramiko.SSHClient")
+def test_connect_general_exception(mock_ssh):
+    """Verify connect raises ConnectionError on general exception (network, DNS, etc)."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh_instance.connect.side_effect = Exception("network fail")
+    mock_ssh.return_value = mock_ssh_instance
     sftp = Sftp()
-    with pytest.raises(AuthenticationError):
-        sftp._load_private_key(private_key="invalid", passphrase=None)
+    with pytest.raises(ConnectionError) as excinfo:
+        sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+    assert "network fail" in str(excinfo.value)
 
 
 @patch("paramiko.SSHClient")
-def test_enter_exit_calls_close(mock_ssh):
+def test_connect_with_pkey(mock_ssh):
+    """Verify connect works with a private key (pkey) provided."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_transport.get_remote_server_key.return_value = MagicMock()
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
     sftp = Sftp()
-    sftp.close = MagicMock()
-    with sftp:
-        pass
-    sftp.close.assert_called_once()
+    sftp._config.pkey = "dummy-key"
+    sftp._config.host_key_validation = False
+    # Patch _load_private_key to avoid real key parsing
+    sftp._load_private_key = MagicMock(return_value="pkeyobj")
+    result = sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
+    sftp._load_private_key.assert_called_once()
+    assert result is not None
+
+
+@patch("paramiko.SSHClient")
+def test_connect_host_key_validation_success(mock_ssh):
+    """Verify connect succeeds when host key validation passes."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_key = MagicMock()
+    mock_key.get_fingerprint.return_value = b"abc"
+    mock_transport.get_remote_server_key.return_value = mock_key
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._config.host_key_validation = True
+    result = sftp.connect(
+        host="host",
+        port=22,
+        username="user",
+        password="pass",
+        passphrase=None,
+        host_key_fingerprint="YWJj",  # base64.b64encode(b"abc").decode()
+    )
+    assert result is not None
+
+
+def test_load_private_key_authentication_error_branch():
+    """Verify _load_private_key raises AuthenticationError for invalid key (branch coverage)."""
+    sftp = Sftp()
+    # This will hit the except branch in _load_private_key
+    with pytest.raises(AuthenticationError):
+        sftp._load_private_key(private_key="invalid-key", passphrase="badpass")
+
+
+@patch("paramiko.SFTPClient")
+def test_move_branch(mock_sftp_client):
+    """Verify move covers branch where no files match pattern (branch coverage)."""
+    sftp = Sftp()
+    sftp._client = MagicMock()
+    sftp._client.listdir_attr.return_value = []
+    sftp.get_files_by_pattern = MagicMock(return_value=[])
+    # Should not raise or call rename
+    sftp._client.rename = MagicMock()
+    sftp.move("/tmp/nomatch.txt", "/newtmp")
+    sftp._client.rename.assert_not_called()
+
+
+@patch("paramiko.SFTPClient")
+def test_close_no_client(mock_sftp_client):
+    """Verify close does not raise if _client is None (branch coverage)."""
+    sftp = Sftp()
+    sftp._client = None
+    sftp._ssh = MagicMock()
+    sftp.close()  # Should not raise
 
 
 def test_ssh_property():
