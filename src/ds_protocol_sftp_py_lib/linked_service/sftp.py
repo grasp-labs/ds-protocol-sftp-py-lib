@@ -1,3 +1,34 @@
+"""
+**File**: `sftp.py`
+**Region**: `src/ds_protocol_sftp_py_lib/linked_service/sftp`
+
+SFTP Linked Service implementation.
+
+This module defines the `SftpLinkedService` class, which implements a linked service for SFTP connections,
+including connection management, error handling, and integration with the SFTP client.
+
+Example:
+    >>> from ds_protocol_sftp_py_lib.linked_service import SftpLinkedService, SftpLinkedServiceSettings
+    >>> linked_service = SftpLinkedService(
+    ...     id=uuid.uuid4(),
+    ...     name="example::linked_service",
+    ...     version="1.0.0",
+    ...     settings=SftpLinkedServiceSettings(
+    ...         host="sftp.example.com",
+    ...         username="user",
+    ...         password="password123",
+    ...         encrypted_credential="encrypted_cred",
+    ...         private_key=None,
+    ...         passphrase=None,
+    ...         timeout=30.0,
+    ...         host_key_fingerprint=None,
+    ...         host_key_validation=True,
+    ...         port=22,
+    ...     ),
+    ... )
+    >>> linked_service.connect()
+"""
+
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
@@ -133,6 +164,7 @@ class SftpLinkedService(
 
         Raises:
             ConnectionError: If connection fails.
+            AuthenticationError: If authentication fails.
         """
         if self._connection is not None:
             logger.info(f"Already connected to {self.settings.host}. Establishing a new connection.")

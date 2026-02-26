@@ -1,3 +1,13 @@
+"""
+**File**: `config.py`
+**Region**: `src/ds_protocol_sftp_py_lib/utils/sftp/config`
+
+SFTP configuration dataclass.
+
+Covers:
+- SftpConfig dataclass definition with default values and type annotations.
+"""
+
 from dataclasses import dataclass, field
 
 from paramiko import AutoAddPolicy, MissingHostKeyPolicy

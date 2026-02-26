@@ -72,7 +72,7 @@ docs = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-ds_protocol_sftp_py_lib = ["resource.yaml", "py.typed"]
+ds_protocol_sftp_py_lib = ["py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
