@@ -162,6 +162,7 @@ def test_close_raises_connection_error_on_exception(mock_sftp):
 
 
 def test_close_sftp_exception_sets_none():
+    """Verify that if an exception occurs while closing the SFTP client, the _sftp attribute is set to None."""
     mock_instance = MagicMock()
     mock_instance.close.side_effect = Exception("fail")
     svc = SftpLinkedService(
@@ -179,6 +180,7 @@ def test_close_sftp_exception_sets_none():
 
 
 def test_close_connection_exception_sets_none():
+    """Verify that if an exception occurs while closing the connection, the _connection attribute is set to None."""
     mock_instance = MagicMock()
     mock_instance.close = MagicMock()
     mock_connection = MagicMock()
@@ -260,7 +262,8 @@ def test_test_connection_calls_connect_when_sftp_none(mock_sftp):
         def after_connect():
             svc._sftp = mock_instance
             svc._connection = mock_client
-            mock_connect.side_effect = after_connect
-            result = svc.test_connection()
-            mock_connect.assert_called_once()
-            assert result == (True, "Connection successfully tested")
+
+        mock_connect.side_effect = after_connect
+        result = svc.test_connection()
+        mock_connect.assert_called_once()
+        assert result == (True, "Connection successfully tested")

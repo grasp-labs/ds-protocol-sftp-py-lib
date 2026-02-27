@@ -8,6 +8,7 @@ This module defines the `SftpLinkedService` class, which implements a linked ser
 including connection management, error handling, and integration with the SFTP client.
 
 Example:
+    >>> import uuid
     >>> from ds_protocol_sftp_py_lib.linked_service import SftpLinkedService, SftpLinkedServiceSettings
     >>> linked_service = SftpLinkedService(
     ...     id=uuid.uuid4(),

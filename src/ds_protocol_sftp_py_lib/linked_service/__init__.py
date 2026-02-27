@@ -7,6 +7,7 @@ SFTP Linked Service
 This module implements a linked service for SFTP connections.
 
 Example:
+    >>> import uuid
     >>> from ds_protocol_sftp_py_lib.linked_service import SftpLinkedService, SftpLinkedServiceSettings
     >>> linked_service = SftpLinkedService(
     ...     id=uuid.uuid4(),

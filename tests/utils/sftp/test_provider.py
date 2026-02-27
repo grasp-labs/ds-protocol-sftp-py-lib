@@ -178,7 +178,7 @@ def test_connect_host_key_validation_failure(mock_ssh):
     # Patch paramiko.RSAKey to avoid real key parsing
     with patch("paramiko.RSAKey", MagicMock()) as mock_rsakey:
         mock_rsakey.return_value.get_name.return_value = "ssh-rsa"
-        with pytest.raises(ConnectionError):
+        with pytest.raises(AuthenticationError):
             sftp.connect(
                 host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint="notmatching"
             )
@@ -296,29 +296,6 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
         sftp.connect(host="host", port=22, username="user", password="pass", passphrase=None, host_key_fingerprint=None)
     sftp.close.assert_called_once()
     assert "no fingerprint" in str(excinfo.value)
-
-
-@patch("paramiko.SSHClient")
-def test_connect_host_key_validation_fingerprint_mismatch_closes(mock_ssh):
-    """Verify connect closes resources and raises ConnectionError if fingerprint does not match."""
-    mock_ssh_instance = MagicMock()
-    mock_transport = MagicMock()
-    mock_key = MagicMock()
-    mock_key.get_fingerprint.return_value = b"wrong"
-    mock_transport.get_remote_server_key.return_value = mock_key
-    mock_ssh_instance.get_transport.return_value = mock_transport
-    mock_ssh_instance.open_sftp.return_value = MagicMock()
-    mock_ssh.return_value = mock_ssh_instance
-    config = SftpConfig(host_key_validation=True)
-    config.host_public_key = "AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."  # Dummy base64 PEM
-    sftp = Sftp(config=config)
-    sftp._ssh = mock_ssh_instance
-    sftp.close = MagicMock()
-    sftp._config.host_key_validation = True
-    with patch("paramiko.RSAKey", MagicMock()) as mock_rsakey, patch("base64.b64decode", MagicMock(return_value=b"dummy")):
-        mock_rsakey.return_value.get_name.return_value = "ssh-rsa"
-        # NOTE: We cannot assert close() or ConnectionError reliably here due to mocking limitations.
-        # This branch is best covered by integration tests or less-mocked unit tests.
 
 
 def test_load_private_key_success(monkeypatch):

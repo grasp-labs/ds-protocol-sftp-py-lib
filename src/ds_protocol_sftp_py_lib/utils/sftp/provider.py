@@ -128,45 +128,16 @@ class Sftp:
             pkey = self._load_private_key(private_key=self._config.pkey, passphrase=passphrase)
 
         # Pre-load expected host key if host_key_validation is enabled
-        if self._config.host_key_validation:
-            if host_key_fingerprint is None:
-                self.close()
-                raise ConnectionError(
-                    message="Host key validation is enabled but no fingerprint was provided.",
-                    details={
-                        "host": host,
-                        "username": username,
-                        "port": port,
-                    },
-                )
-            # We expect a base64-encoded fingerprint, but need the actual key object
-            # This requires the user to provide the full public key, or you must fetch it securely out-of-band
-            # For demo: assume the config provides the public key in PEM format as config.host_public_key
-            if not hasattr(self._config, "host_public_key") or not self._config.host_public_key:
-                self.close()
-                raise ConnectionError(
-                    message="Host key validation requires host_public_key in config.",
-                    details={
-                        "host": host,
-                        "username": username,
-                        "port": port,
-                    },
-                )
-            try:
-                key_bytes = base64.b64decode(self._config.host_public_key.encode())
-                key_obj = paramiko.RSAKey(data=key_bytes)
-            except Exception as exc:
-                self.close()
-                raise ConnectionError(
-                    message=f"Failed to parse host public key: {exc}",
-                    details={
-                        "host": host,
-                        "username": username,
-                        "port": port,
-                    },
-                ) from exc
-            self._ssh.get_host_keys().add(host, key_obj.get_name(), key_obj)
-            self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+        if self._config.host_key_validation and host_key_fingerprint is None:
+            self.close()
+            raise ConnectionError(
+                message="Host key validation is enabled but no fingerprint was provided.",
+                details={
+                    "host": host,
+                    "username": username,
+                    "port": port,
+                },
+            )
 
         try:
             logger.info(f"Connecting to {host}")
@@ -190,7 +161,7 @@ class Sftp:
                 details={"host": host, "username": username, "port": port},
             ) from exc
 
-        # Get servers host key.
+        # Get server's host key and validate fingerprint if required
         transport = self._ssh.get_transport()
         if not transport:
             self.close()
@@ -202,6 +173,22 @@ class Sftp:
                     "port": port,
                 },
             )
+
+        if self._config.host_key_validation:
+            server_key = transport.get_remote_server_key()
+            actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
+            if actual_fingerprint != host_key_fingerprint:
+                self.close()
+                raise AuthenticationError(
+                    message="Host key fingerprint does not match.",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                        "expected_fingerprint": host_key_fingerprint,
+                        "actual_fingerprint": actual_fingerprint,
+                    },
+                )
 
         self._client = self._ssh.open_sftp()
         return self._client
