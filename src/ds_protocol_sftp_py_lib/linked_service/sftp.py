@@ -38,7 +38,6 @@ from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedServi
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
 )
-from paramiko import SFTPClient
 
 from ..enums import ResourceType
 from ..utils.sftp.config import SftpConfig
@@ -113,7 +112,7 @@ class SftpLinkedService(
 
     settings: SftpLinkedServiceSettingsType
 
-    _connection: SFTPClient | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
+    _connection: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
     _sftp: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
 
     @property
@@ -126,11 +125,11 @@ class SftpLinkedService(
         return ResourceType.LINKED_SERVICE
 
     @property
-    def connection(self) -> SFTPClient:
+    def connection(self) -> Sftp:
         """Get the SFTP client connection.
 
         Returns:
-            SFTPClient: The active SFTP client connection.
+            Sftp: The active SFTP client connection.
 
         Raises:
             ConnectionError: If the connection is not initialized.
@@ -174,7 +173,7 @@ class SftpLinkedService(
         if self._sftp is None:
             self._sftp = self._init_sftp()
 
-        self._connection = self._sftp.connect(
+        self._sftp.connect(
             host=self.settings.host,
             port=self.settings.port,
             username=self.settings.username,
@@ -182,6 +181,7 @@ class SftpLinkedService(
             passphrase=self.settings.passphrase,
             host_key_fingerprint=self.settings.host_key_fingerprint,
         )
+        self._connection = self._sftp
 
     def test_connection(self) -> tuple[bool, str]:
         """Perform a lightweight health check against the SFTP backend.
@@ -197,7 +197,7 @@ class SftpLinkedService(
             if self._sftp is None:
                 self.connect()
             # Lightweight health check: get current working directory
-            cwd = self.connection.getcwd()
+            cwd = self.connection.client.getcwd()
             if cwd is not None:
                 return True, "Connection successfully tested"
             else:

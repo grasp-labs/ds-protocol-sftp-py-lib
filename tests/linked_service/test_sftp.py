@@ -48,7 +48,7 @@ def test_connect_sets_connection(mock_sftp):
         settings=make_settings(),
     )
     svc.connect()
-    assert svc._connection is mock_client
+    assert svc._connection is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
@@ -88,8 +88,7 @@ def test_test_connection_success(mock_sftp):
 def test_test_connection_failure(mock_sftp):
     """Verify test_connection returns failure when getcwd returns None."""
     mock_instance = MagicMock()
-    mock_instance._client = MagicMock()
-    mock_instance._client.getcwd.return_value = None
+    mock_instance.client.getcwd.return_value = None
     mock_sftp.return_value = mock_instance
     svc = SftpLinkedService(
         id="test_id",
@@ -98,7 +97,7 @@ def test_test_connection_failure(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = mock_instance
-    svc._connection = mock_instance._client
+    svc._connection = mock_instance
     result = svc.test_connection()
     assert result == (False, "Could not get current working directory")
 
@@ -107,8 +106,7 @@ def test_test_connection_failure(mock_sftp):
 def test_test_connection_exception(mock_sftp):
     """Verify test_connection returns failure when getcwd raises an exception."""
     mock_instance = MagicMock()
-    mock_instance._client = MagicMock()
-    mock_instance._client.getcwd.side_effect = Exception("fail")
+    mock_instance.client.getcwd.side_effect = Exception("fail")
     mock_sftp.return_value = mock_instance
     svc = SftpLinkedService(
         id="test_id",
@@ -117,7 +115,7 @@ def test_test_connection_exception(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = mock_instance
-    svc._connection = mock_instance._client
+    svc._connection = mock_instance
     result = svc.test_connection()
     assert result[0] is False
     assert "fail" in result[1]
@@ -217,7 +215,7 @@ def test_connect_when_already_connected(mock_sftp):
     with patch.object(svc, "close") as mock_close:
         svc.connect()
         mock_close.assert_called_once()
-    assert svc._connection is mock_client
+    assert svc._connection is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
@@ -238,7 +236,7 @@ def test_connect_inits_sftp_when_none(mock_sftp):
     with patch.object(svc, "_init_sftp", return_value=mock_instance) as mock_init:
         svc.connect()
         mock_init.assert_called_once()
-    assert svc._connection is mock_client
+    assert svc._connection is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
