@@ -6,9 +6,9 @@ Constants for SFTP protocol.
 
 Example:
     >>> ResourceType.LINKED_SERVICE
-    'DS.RESOURCE.LINKED_SERVICE.SFTP'
+    'ds.resource.linked-service.sftp'
     >>> ResourceType.DATASET
-    'DS.RESOURCE.DATASET.SFTP'
+    'ds.resource.dataset.sftp'
 """
 
 from enum import StrEnum
@@ -19,5 +19,5 @@ class ResourceType(StrEnum):
     Sftp ResourceTypes.
     """
 
-    LINKED_SERVICE = "DS.RESOURCE.LINKED_SERVICE.SFTP"
-    DATASET = "DS.RESOURCE.DATASET.SFTP"
+    LINKED_SERVICE = "ds.resource.linked-service.sftp"
+    DATASET = "ds.resource.dataset.sftp"
