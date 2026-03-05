@@ -205,7 +205,7 @@ class SftpLinkedService(
     def close(self) -> None:
         """Close the linked service.
 
-        Always set _sftp to None, even if exceptions are raised.
+        Sets the _sftp attribute to None to indicate the connection is closed.
 
         Raises:
             ConnectionError: If closing the SFTP connection fails.

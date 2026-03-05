@@ -62,7 +62,6 @@ def test_connection_property_raises_when_none(mock_sftp):
         version="1.0.0",
         settings=make_settings(),
     )
-    svc._connection = None
     with pytest.raises(ConnectionError):
         _ = svc.connection
 

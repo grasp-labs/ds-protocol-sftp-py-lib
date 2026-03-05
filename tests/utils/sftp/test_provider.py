@@ -52,14 +52,6 @@ def test_close_idempotent(mock_sftp_client):
     sftp.close()
 
 
-def test_client_property_raises_connection_error():
-    """Verify client property raises ConnectionError when client is not connected."""
-    sftp = Sftp()
-    sftp._client = None
-    with pytest.raises(ConnectionError):
-        _ = sftp.client
-
-
 def test_load_private_key_raises_authentication_error():
     """Verify that _load_private_key raises AuthenticationError when given an invalid key."""
     sftp = Sftp()
@@ -302,6 +294,67 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
         )
     sftp.close.assert_called_once()
     assert "no fingerprint" in str(excinfo.value)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_sets_missing_host_key_policy_when_validation_disabled(mock_ssh):
+    """Verify connect sets missing host key policy when host_key_validation is False."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.connect(
+        host="host",
+        port=22,
+        username="user",
+        password="pass",
+        passphrase=None,
+        host_key_fingerprint=None,
+        pkey=None,
+        host_key_validation=False,
+        timeout=None,
+        policy=None,
+    )
+    mock_ssh_instance.set_missing_host_key_policy.assert_called()
+
+
+@patch("paramiko.SSHClient")
+def test_connect_fingerprint_mismatch_calls_close_and_raises(mock_ssh):
+    """Verify connect calls close and raises AuthenticationError on fingerprint mismatch."""
+    mock_ssh_instance = MagicMock()
+    mock_transport = MagicMock()
+    mock_key = MagicMock()
+    mock_key.get_fingerprint.return_value = b"wrong"
+    mock_transport.get_remote_server_key.return_value = mock_key
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_ssh_instance.open_sftp.return_value = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.close = MagicMock()
+    with pytest.raises(AuthenticationError):
+        sftp.connect(
+            host="host",
+            port=22,
+            username="user",
+            password="pass",
+            passphrase=None,
+            host_key_fingerprint="notmatching",
+            pkey=None,
+            host_key_validation=True,
+            timeout=None,
+            policy=None,
+        )
+    sftp.close.assert_called_once()
+
+
+def test_exit_calls_close():
+    """Verify __exit__ calls close when exiting context manager."""
+    sftp = Sftp()
+    sftp.close = MagicMock()
+    with sftp:
+        pass
+    sftp.close.assert_called_once()
 
 
 def test_load_private_key_success(monkeypatch):

@@ -17,8 +17,6 @@ Example:
     ...         passphrase=None,
     ...         host_key_fingerprint=None,
     ...     )
-    ...     files = sftp.list_directory("/remote/path")
-    ...     sftp.move("/remote/path/file.txt", "/remote/path/archive/file.txt")
 """
 
 import base64
@@ -126,8 +124,8 @@ class Sftp:
             paramiko.SFTPClient: An active SFTP client connection.
 
         Raises:
-            AuthenticationError: If authentication fails or SSH transport is unavailable.
-            ConnectionError: For network errors, host key validation failures, or other connection issues.
+            AuthenticationError: If authentication fails, host key validation fails, or SSH transport is unavailable.
+            ConnectionError: For network errors or other connection issues.
         """
         pkey_obj = None
         if pkey:
