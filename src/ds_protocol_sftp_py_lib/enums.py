@@ -5,8 +5,8 @@
 Constants for SFTP protocol.
 
 Example:
-    >>> ResourceType.LINKED-SERVICE
-    'ds.resource.linked_service.sftp'
+    >>> ResourceType.LINKED_SERVICE
+    'ds.resource.linked-service.sftp'
     >>> ResourceType.DATASET
     'ds.resource.dataset.sftp'
 """
