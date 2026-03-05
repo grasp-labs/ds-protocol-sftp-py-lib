@@ -22,9 +22,7 @@ Example:
 """
 
 import base64
-import fnmatch
 import io
-import posixpath
 from typing import Any
 
 import paramiko
@@ -33,9 +31,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     AuthenticationError,
     ConnectionError,
 )
-from paramiko import SFTPAttributes, ssh_exception
-
-from .config import SftpConfig
+from paramiko import AutoAddPolicy, MissingHostKeyPolicy, ssh_exception
 
 logger = Logger.get_logger(__name__, package=True)
 
@@ -49,22 +45,18 @@ class Sftp:
     provides convenience methods for connecting, listing directories, moving files and
     accessing the raw SSH/SFTP clients when needed.
 
-    A :class:`SftpConfig` instance can be supplied to customize connection behavior
-    (for example, host key policies). An existing :class:`paramiko.SFTPClient` can be
-    injected for cases where the SSH/SFTP session is created externally.
+    An existing :class:`paramiko.SFTPClient` can be injected for cases where the
+    SSH/SFTP session is created externally.
 
     This class is also a context manager and can be used with ``with`` statements to
     automatically close the underlying SSH/SFTP connections.
 
     Basic usage::
 
-        from ds_protocol_sftp_py_lib.utils.sftp.config import SftpConfig
         from ds_protocol_sftp_py_lib.utils.sftp.provider import Sftp
 
-        config = SftpConfig()
-
         # Using explicit connect/close
-        sftp = Sftp(config=config)
+        sftp = Sftp()
         client = sftp.connect(
             host="sftp.example.com",
             port=22,
@@ -77,7 +69,7 @@ class Sftp:
         sftp.close()
 
         # Using as a context manager
-        with Sftp(config=config) as sftp:
+        with Sftp() as sftp:
             client = sftp.connect(
                 host="sftp.example.com",
                 port=22,
@@ -85,20 +77,30 @@ class Sftp:
                 password="secret",
                 passphrase=None,
                 host_key_fingerprint=None,
+                pkey=None,
+                host_key_validation=True,
+                timeout=None,
+                policy=None,
             )
             files = sftp.list_directory("/remote/path")
     """
 
-    def __init__(self, config: SftpConfig | None = None, client: paramiko.SFTPClient | None = None):
-        self._config = config or SftpConfig()
+    def __init__(self, client: paramiko.SFTPClient | None = None):
         self._client: paramiko.SFTPClient | None = client
         self._ssh = paramiko.SSHClient()
-        # Policy will be set in connect() if host_key_validation is enabled
-        if not self._config.host_key_validation:
-            self._ssh.set_missing_host_key_policy(self._config.policy)
 
     def connect(
-        self, host: str, port: int, username: str, password: str | None, passphrase: str | None, host_key_fingerprint: str | None
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str | None,
+        passphrase: str | None,
+        host_key_fingerprint: str | None,
+        pkey: str | None = None,
+        host_key_validation: bool = True,
+        timeout: float | None = None,
+        policy: MissingHostKeyPolicy | None = None,
     ) -> paramiko.SFTPClient:
         """
         Establish and return an active SFTP client connection to the remote server.
@@ -115,6 +117,10 @@ class Sftp:
             passphrase (str | None): Passphrase for the private key, if required.
             host_key_fingerprint (str | None): Expected base64-encoded host key fingerprint for validation.
                 Required if host key validation is enabled.
+            pkey (str | None): Private key in PEM format as a string, or None if not using key-based auth.
+            host_key_validation (bool): Whether to perform host key validation against the provided fingerprint.
+            timeout (float | None): Optional connection timeout in seconds.
+            policy (MissingHostKeyPolicy | None): Optional Paramiko host key policy to use if host key validation is disabled.
 
         Returns:
             paramiko.SFTPClient: An active SFTP client connection.
@@ -123,12 +129,17 @@ class Sftp:
             AuthenticationError: If authentication fails or SSH transport is unavailable.
             ConnectionError: For network errors, host key validation failures, or other connection issues.
         """
-        pkey = None
-        if self._config.pkey:
-            pkey = self._load_private_key(private_key=self._config.pkey, passphrase=passphrase)
+        pkey_obj = None
+        if pkey:
+            pkey_obj = self._load_private_key(private_key=pkey, passphrase=passphrase)
+
+        if not host_key_validation:
+            if policy is None:
+                policy = AutoAddPolicy()
+            self._ssh.set_missing_host_key_policy(policy)
 
         # Pre-load expected host key if host_key_validation is enabled
-        if self._config.host_key_validation and host_key_fingerprint is None:
+        if host_key_validation and host_key_fingerprint is None:
             self.close()
             raise ConnectionError(
                 message="Host key validation is enabled but no fingerprint was provided.",
@@ -141,9 +152,7 @@ class Sftp:
 
         try:
             logger.info(f"Connecting to {host}")
-            self._ssh.connect(
-                hostname=host, port=port, username=username, password=password, pkey=pkey, timeout=self._config.timeout
-            )
+            self._ssh.connect(hostname=host, port=port, username=username, password=password, pkey=pkey_obj, timeout=timeout)
         except ssh_exception.AuthenticationException as exc:
             logger.error(f"Failed to authenticate to host: {host}: {exc}")
             raise AuthenticationError(
@@ -174,7 +183,7 @@ class Sftp:
                 },
             )
 
-        if self._config.host_key_validation:
+        if host_key_validation:
             server_key = transport.get_remote_server_key()
             actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
             if actual_fingerprint != host_key_fingerprint:
@@ -222,44 +231,6 @@ class Sftp:
                 "in PEM format.",
             ) from exc
 
-    def list_directory(self, path: str) -> list[SFTPAttributes]:
-        """
-        List files in a directory on the remote system.
-        """
-        logger.info(f"Listing directory on path {path}.")
-        if self._client is None:
-            raise ConnectionError(message="Not Connected to SFTP.", details={"path": path})
-        files = sorted(self._client.listdir_attr(path), key=lambda x: x.filename)
-        return files
-
-    def get_files_by_pattern(self, path: str, fnmatch_pattern: str) -> list[SFTPAttributes]:
-        """
-        Get files from SFTP server matching a pattern.
-        """
-        logger.info(f"Getting files with pattern: {fnmatch_pattern} on path: {path}.")
-        matched_files = []
-        for file in self.list_directory(path):
-            if fnmatch.fnmatch(file.filename, fnmatch_pattern):
-                matched_files.append(file)
-
-        return matched_files
-
-    def move(self, old_path: str, new_path: str) -> None:
-        """
-        Rename/move a file on the remote SFTP server.
-        Uses POSIX path handling for remote paths.
-        """
-        logger.info(f"Moving file from {old_path} to {new_path}.")
-        if self._client is None:
-            raise ConnectionError(message="Not Connected to SFTP.", details={"old_path": old_path, "new_path": new_path})
-        directory, pattern = posixpath.split(old_path)
-        matching_files = self.get_files_by_pattern(directory, pattern)
-        for file in matching_files:
-            source_path = posixpath.join(directory, file.filename)
-            destination_path = posixpath.join(new_path, file.filename)
-            self._client.rename(source_path, destination_path)
-            logger.info(f"Moved {source_path} to {destination_path}")
-
     # ------ Properties ------
 
     @property
@@ -293,6 +264,3 @@ class Sftp:
         if self._ssh is not None:
             self._ssh.close()
             self._ssh = paramiko.SSHClient()
-            # Re-apply the configured host key policy (and any other SSH client setup)
-            if not self._config.host_key_validation:
-                self._ssh.set_missing_host_key_policy(self._config.policy)

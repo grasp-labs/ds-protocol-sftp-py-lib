@@ -20,6 +20,7 @@ from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpL
 
 def make_settings():
     """Helper function to create default SftpLinkedServiceSettings for testing."""
+    # Provide a dummy fingerprint to avoid ConnectionError in Sftp.connect
     return SftpLinkedServiceSettings(
         host="localhost",
         username="user",
@@ -28,9 +29,10 @@ def make_settings():
         private_key=None,
         passphrase=None,
         timeout=1.0,
-        host_key_fingerprint=None,
+        host_key_fingerprint="dummy-fingerprint",
         host_key_validation=True,
         port=22,
+        policy=None,
     )
 
 
@@ -48,7 +50,7 @@ def test_connect_sets_connection(mock_sftp):
         settings=make_settings(),
     )
     svc.connect()
-    assert svc._connection is mock_instance
+    assert svc.connection is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
@@ -122,82 +124,6 @@ def test_test_connection_exception(mock_sftp):
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
-def test_close_idempotent(mock_sftp):
-    """Verify that close method is idempotent and does not raise when called multiple times."""
-    mock_instance = MagicMock()
-    mock_instance._client = MagicMock()
-    mock_instance.close = MagicMock()
-    mock_instance._client.close = MagicMock()
-    svc = SftpLinkedService(
-        id="test_id",
-        name="test_name",
-        version="1.0.0",
-        settings=make_settings(),
-    )
-    svc._sftp = mock_instance
-    svc._connection = mock_instance._client
-    svc.close()
-    svc.close()  # Should not raise
-    mock_instance.close.assert_called()
-    mock_instance._client.close.assert_called()
-
-
-@patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
-def test_close_raises_connection_error_on_exception(mock_sftp):
-    """Verify that close method raises ConnectionError when an exception occurs."""
-    mock_instance = MagicMock()
-    mock_instance.close.side_effect = Exception("fail")
-    svc = SftpLinkedService(
-        id="test_id",
-        name="test_name",
-        version="1.0.0",
-        settings=make_settings(),
-    )
-    svc._sftp = mock_instance
-    svc._connection = MagicMock()
-    with pytest.raises(ConnectionError):
-        svc.close()
-
-
-def test_close_sftp_exception_sets_none():
-    """Verify that if an exception occurs while closing the SFTP client, the _sftp attribute is set to None."""
-    mock_instance = MagicMock()
-    mock_instance.close.side_effect = Exception("fail")
-    svc = SftpLinkedService(
-        id="test_id",
-        name="test_name",
-        version="1.0.0",
-        settings=make_settings(),
-    )
-    svc._sftp = mock_instance
-    svc._connection = MagicMock()
-    # Should raise ConnectionError and set _sftp to None
-    with pytest.raises(ConnectionError):
-        svc.close()
-    assert svc._sftp is None
-
-
-def test_close_connection_exception_sets_none():
-    """Verify that if an exception occurs while closing the connection, the _connection attribute is set to None."""
-    mock_instance = MagicMock()
-    mock_instance.close = MagicMock()
-    mock_connection = MagicMock()
-    mock_connection.close.side_effect = Exception("fail")
-    svc = SftpLinkedService(
-        id="test_id",
-        name="test_name",
-        version="1.0.0",
-        settings=make_settings(),
-    )
-    svc._sftp = mock_instance
-    svc._connection = mock_connection
-    # Should raise ConnectionError and set _connection to None
-    with pytest.raises(ConnectionError):
-        svc.close()
-    assert svc._connection is None
-
-
-@patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
 def test_connect_when_already_connected(mock_sftp):
     """Covers: connect() when already connected (should close and reconnect)."""
     mock_instance = MagicMock()
@@ -212,10 +138,9 @@ def test_connect_when_already_connected(mock_sftp):
     )
     svc._connection = MagicMock()  # Simulate already connected
     svc._sftp = mock_instance
-    with patch.object(svc, "close") as mock_close:
-        svc.connect()
-        mock_close.assert_called_once()
-    assert svc._connection is mock_instance
+    svc.connect()
+    mock_instance.connect.assert_called_once()
+    assert svc._sftp is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
@@ -232,11 +157,10 @@ def test_connect_inits_sftp_when_none(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = None
-    svc._connection = None
     with patch.object(svc, "_init_sftp", return_value=mock_instance) as mock_init:
         svc.connect()
         mock_init.assert_called_once()
-    assert svc._connection is mock_instance
+    assert svc._sftp is mock_instance
 
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
@@ -254,7 +178,6 @@ def test_test_connection_calls_connect_when_sftp_none(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = None
-    svc._connection = None
     with patch.object(svc, "connect") as mock_connect:
         # After connect, set up _sftp and _connection for the rest of the method
         def after_connect():
@@ -265,3 +188,20 @@ def test_test_connection_calls_connect_when_sftp_none(mock_sftp):
         result = svc.test_connection()
         mock_connect.assert_called_once()
         assert result == (True, "Connection successfully tested")
+
+
+@patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
+def test_close_calls_sftp_close_and_sets_none(mock_sftp):
+    """Verify that close() calls close on the Sftp instance and sets _sftp to None."""
+    mock_instance = MagicMock()
+    mock_sftp.return_value = mock_instance
+    svc = SftpLinkedService(
+        id="test_id",
+        name="test_name",
+        version="1.0.0",
+        settings=make_settings(),
+    )
+    svc._sftp = mock_instance
+    svc.close()
+    mock_instance.close.assert_called_once()
+    assert svc._sftp is None

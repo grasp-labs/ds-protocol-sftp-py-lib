@@ -38,9 +38,9 @@ from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedServi
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
 )
+from paramiko import MissingHostKeyPolicy
 
 from ..enums import ResourceType
-from ..utils.sftp.config import SftpConfig
 from ..utils.sftp.provider import Sftp
 
 logger = Logger.get_logger(__name__, package=True)
@@ -93,6 +93,9 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     port: int = 22
     """SFTP server port."""
 
+    policy: MissingHostKeyPolicy | None = None
+    """Host key policy to use if host key validation is disabled."""
+
 
 SftpLinkedServiceSettingsType = TypeVar("SftpLinkedServiceSettingsType", bound=SftpLinkedServiceSettings)
 
@@ -112,7 +115,6 @@ class SftpLinkedService(
 
     settings: SftpLinkedServiceSettingsType
 
-    _connection: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
     _sftp: Sftp | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
 
     @property
@@ -134,7 +136,7 @@ class SftpLinkedService(
         Raises:
             ConnectionError: If the connection is not initialized.
         """
-        if self._connection is None:
+        if self._sftp is None:
             raise ConnectionError(
                 message="Connection is not initialized",
                 details={
@@ -144,20 +146,15 @@ class SftpLinkedService(
                     "type": self.type.value,
                 },
             )
-        return self._connection
+        return self._sftp
 
     def _init_sftp(self) -> Sftp:
-        """Initialize the Sftp client instance with SftpConfig.
+        """Initialize the Sftp client.
 
         Returns:
             Sftp: An initialized Sftp provider instance.
         """
-        config = SftpConfig(
-            pkey=self.settings.private_key,
-            host_key_validation=self.settings.host_key_validation,
-            timeout=self.settings.timeout,
-        )
-        return Sftp(config=config)
+        return Sftp()
 
     def connect(self) -> None:
         """Initialize the Sftp client instance if not already initialized.
@@ -166,10 +163,6 @@ class SftpLinkedService(
             ConnectionError: If connection fails.
             AuthenticationError: If authentication fails.
         """
-        if self._connection is not None:
-            logger.info(f"Already connected to {self.settings.host}. Establishing a new connection.")
-            self.close()
-
         if self._sftp is None:
             self._sftp = self._init_sftp()
 
@@ -180,8 +173,11 @@ class SftpLinkedService(
             password=self.settings.password,
             passphrase=self.settings.passphrase,
             host_key_fingerprint=self.settings.host_key_fingerprint,
+            pkey=self.settings.private_key,
+            host_key_validation=self.settings.host_key_validation,
+            timeout=self.settings.timeout,
+            policy=self.settings.policy,
         )
-        self._connection = self._sftp
 
     def test_connection(self) -> tuple[bool, str]:
         """Perform a lightweight health check against the SFTP backend.
@@ -194,10 +190,11 @@ class SftpLinkedService(
                 - (False, error message) otherwise.
         """
         try:
+            self.connect()
             if self._sftp is None:
-                self.connect()
+                return False, "SFTP connection is not initialized after connect()"
             # Lightweight health check: get current working directory
-            cwd = self.connection.client.getcwd()
+            cwd = self._sftp.client.getcwd()
             if cwd is not None:
                 return True, "Connection successfully tested"
             else:
@@ -208,36 +205,11 @@ class SftpLinkedService(
     def close(self) -> None:
         """Close the linked service.
 
-        Always set _sftp and _connection to None, even if exceptions are raised.
+        Always set _sftp to None, even if exceptions are raised.
 
         Raises:
             ConnectionError: If closing the SFTP connection fails.
         """
-        sftp_exc = None
-        conn_exc = None
         if self._sftp:
-            try:
-                self._sftp.close()
-            except Exception as exc:
-                sftp_exc = exc
-            finally:
-                self._sftp = None
-
-        if self._connection:
-            try:
-                self._connection.close()
-            except Exception as exc:
-                conn_exc = exc
-            finally:
-                self._connection = None
-
-        if sftp_exc or conn_exc:
-            raise ConnectionError(
-                message="Failed to close SFTP connection",
-                details={
-                    "host": self.settings.host,
-                    "username": self.settings.username,
-                    "port": self.settings.port,
-                    "type": self.type.value,
-                },
-            ) from sftp_exc or conn_exc
+            self._sftp.close()
+            self._sftp = None
