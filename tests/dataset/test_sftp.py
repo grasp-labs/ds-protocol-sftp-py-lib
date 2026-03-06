@@ -1,0 +1,388 @@
+"""
+**File:** `tests/dataset/test_sftp.py`
+**Region:** `tests/dataset`
+
+This module contains tests for the SFTP Dataset implementation.
+The tests cover various scenarios for reading, writing, and
+listing data from an SFTP server using the SftpDataset class.
+"""
+
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError
+
+from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, ReadSettings, SftpDataset, SftpDatasetSettings
+from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
+
+
+@pytest.fixture
+def mock_linked_service():
+    """Fixture to create a mock SFTP linked service."""
+    settings = SftpLinkedServiceSettings(
+        host="sftp.example.com",
+        username="user",
+        password="password123",
+        encrypted_credential="encrypted_cred",
+        private_key=None,
+        passphrase=None,
+        timeout=30.0,
+        host_key_fingerprint=None,
+        host_key_validation=True,
+        port=22,
+    )
+    service = SftpLinkedService(
+        id="24b8c9d-1234-5678-90ab-cdef12345678", name="Mock SFTP Linked Service", version="1.0.0", settings=settings
+    )
+    service._sftp = MagicMock()
+    service.connection.client = MagicMock()
+    return service
+
+
+def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", read_as_collection=False, download=False):
+    """Helper function to create an SftpDataset with specified settings."""
+    settings = SftpDatasetSettings(
+        folder_path=folder_path,
+        file_name=file_name,
+        read=ReadSettings(read_as_collection=read_as_collection),
+        list=ListSettings(download=download),
+    )
+    return SftpDataset(
+        id="12345678-90ab-cdef-1234-567890abcdef",
+        name="Test SFTP Dataset",
+        version="1.0.0",
+        linked_service=mock_linked_service,
+        settings=settings,
+    )
+
+
+def test_list_files_basic(mock_linked_service):
+    """Test listing files in the SFTP dataset without downloading content."""
+    # Mock SFTPAttributes
+    attr = MagicMock()
+    attr.filename = "file1.csv"
+    attr.st_size = 100
+    attr.st_uid = 1
+    attr.st_gid = 1
+    attr.st_mode = 0o644
+    attr.st_atime = 1234567890
+    attr.st_mtime = 1234567891
+    mock_linked_service.connection.client.listdir_attr.return_value = [attr]
+    ds = make_dataset(mock_linked_service)
+    ds.list()
+    assert isinstance(ds.output, pd.DataFrame)
+    assert "file_name" in ds.output.columns
+    assert ds.output.iloc[0]["file_name"] == "file1.csv"
+
+
+def test_list_files_with_download(mock_linked_service):
+    """Test listing files in the SFTP dataset with downloading content."""
+    attr = MagicMock()
+    attr.filename = "file2.csv"
+    attr.st_size = 200
+    attr.st_uid = 2
+    attr.st_gid = 2
+    attr.st_mode = 0o600
+    attr.st_atime = 1234567892
+    attr.st_mtime = 1234567893
+    mock_linked_service.connection.client.listdir_attr.return_value = [attr]
+    # Patch .read() on open() directly (no context manager)
+    mock_linked_service._sftp.client.open.return_value.read.return_value = b"csvdata"
+    ds = make_dataset(mock_linked_service, download=True)
+    ds.list()
+    assert "content" in ds.output.columns
+    assert ds.output.iloc[0]["content"] == b"csvdata"
+
+
+def test_read_files_as_dataframe(mock_linked_service):
+    """Test reading a file from the SFTP dataset as a DataFrame."""
+    attr = MagicMock()
+    attr.filename = "file3.csv"
+    mock_linked_service.connection.client.listdir_attr.return_value = [attr]
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"col1,col2\n1,2"
+    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    ds = make_dataset(mock_linked_service)
+    with patch.object(ds.deserializer, "deserialize", return_value=pd.DataFrame({"col1": [1], "col2": [2]})):
+        ds.read()
+        assert isinstance(ds.output, pd.DataFrame)
+        assert "col1" in ds.output.columns
+
+
+def test_create_file_success(mock_linked_service):
+    """Test creating a file in the SFTP dataset successfully."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    mock_file = MagicMock()
+    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
+    with patch.object(ds.serializer, "serialize", return_value=b"serialized"):
+        ds.create()
+        mock_file.write.assert_called_once_with(b"serialized")
+
+
+def test_purge_file_success(mock_linked_service):
+    """Test purging a file from the SFTP dataset successfully."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.file_name = "file4.csv"
+    ds.settings.folder_path = "/data"
+    ds.linked_service.connection.client.remove = MagicMock()
+    ds.purge()
+    ds.linked_service.connection.client.remove.assert_called_once()
+
+
+def test_list_file_not_found_raises_list_error(mock_linked_service):
+    """Test that listing files in the SFTP dataset raises a ListError when the file is not found."""
+    ds = make_dataset(mock_linked_service)
+    with patch.object(SftpDataset, "_list_directory", side_effect=FileNotFoundError), pytest.raises(ListError):
+        ds.list()
+
+
+def test_read_file_not_found_raises_read_error(mock_linked_service):
+    """Test that reading a file from the SFTP dataset raises a ReadError when the file is not found."""
+    ds = make_dataset(mock_linked_service)
+    with patch.object(SftpDataset, "_list_directory", side_effect=FileNotFoundError), pytest.raises(ReadError):
+        ds.read()
+
+
+def test_create_file_not_found_raises_create_error(mock_linked_service):
+    """Test that creating a file in the SFTP dataset raises a CreateError when the file is not found."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    mock_linked_service.connection.client.open.side_effect = FileNotFoundError
+    with pytest.raises(CreateError):
+        ds.create()
+
+
+def test_purge_file_not_found_is_noop(mock_linked_service):
+    """Test that purging a file from the SFTP dataset does not raise an error when the file is not found."""
+    ds = make_dataset(mock_linked_service)
+    ds.linked_service.connection.client.remove.side_effect = FileNotFoundError
+    # Should not raise
+    ds.purge()
+
+
+def test_update_not_implemented(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with pytest.raises(NotImplementedError):
+        ds.update()
+
+
+def test_upsert_not_implemented(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with pytest.raises(NotImplementedError):
+        ds.upsert()
+
+
+def test_delete_not_implemented(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with pytest.raises(NotImplementedError):
+        ds.delete()
+
+
+def test_rename_not_implemented(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with pytest.raises(NotImplementedError):
+        ds.rename()
+
+
+def test_close_calls_linked_service_close(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    mock_linked_service.close = MagicMock()
+    ds.close()
+    mock_linked_service.close.assert_called_once()
+
+
+def test_get_folder_and_file_path(mock_linked_service):
+    ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")
+    result = ds._get_folder_and_file_path()
+    assert "foo/bar" in str(result)
+    assert "baz.txt" in str(result)
+
+
+def test_ensure_sftp_directory_normal(mock_linked_service):
+    ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
+    mock_linked_service.connection.client.mkdir = MagicMock()
+    ds._ensure_sftp_directory("/foo/bar/baz")
+    assert mock_linked_service.connection.client.mkdir.called
+
+
+def test_ensure_sftp_directory_max_depth(mock_linked_service):
+    ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")
+    with pytest.raises(CreateError):
+        ds._ensure_sftp_directory("/" + "/".join(["a"] * 25), max_depth=20)
+
+
+def test__read_files_as_collection_and_dataframe_empty(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    # Should return empty DataFrame if no files
+    with patch.object(ds, "linked_service"):
+        assert ds._read_files_as_collection([]).empty
+        assert ds._read_files_as_dataframe([]).empty
+
+
+def test__read_files_as_collection_handles_file(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    attr = MagicMock()
+    attr.filename = "foo.txt"
+    attr.st_size = 1
+    attr.st_uid = 1
+    attr.st_gid = 1
+    attr.st_mode = 0o644
+    attr.st_atime = 1
+    attr.st_mtime = 2
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"abc"
+    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    with patch("pandas.DataFrame", wraps=pd.DataFrame) as df_patch:
+        ds._read_files_as_collection([attr])
+        assert df_patch.called
+
+
+def test__read_files_as_dataframe_handles_file(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    attr = MagicMock()
+    attr.filename = "foo.txt"
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"abc"
+    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    with patch.object(ds.deserializer, "deserialize", return_value=pd.DataFrame({"a": [1]})):
+        out = ds._read_files_as_dataframe([attr])
+        assert isinstance(out, pd.DataFrame)
+
+
+def test__list_directory_files_empty(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    out = ds._list_directory_files([])
+    assert isinstance(out, pd.DataFrame)
+    assert out.empty
+
+
+def test__list_directory_files_handles_file(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    attr = MagicMock()
+    attr.filename = "foo.txt"
+    attr.st_size = 1
+    attr.st_uid = 1
+    attr.st_gid = 1
+    attr.st_mode = 0o644
+    attr.st_atime = 1
+    attr.st_mtime = 2
+    with patch("pandas.DataFrame", wraps=pd.DataFrame) as df_patch:
+        ds._list_directory_files([attr])
+        assert df_patch.called
+
+
+def test_read_no_files_logs_warning(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with (
+        patch.object(ds, "_get_files_by_pattern", return_value=[]),
+        patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch,
+    ):
+        ds.read()
+        assert warn_patch.called
+        assert ds.output.empty
+
+
+def test_create_no_input_logs_info(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    ds.input = None
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.info") as info_patch:
+        ds.create()
+        assert info_patch.called
+
+
+def test_purge_file_not_found_logs_warning(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    ds.settings.file_name = "file4.csv"
+    ds.settings.folder_path = "/data"
+    mock_linked_service.connection.client.remove.side_effect = FileNotFoundError
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch:
+        ds.purge()
+        assert warn_patch.called
+
+
+def test_list_directory_file_not_found_logs_warning(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    mock_linked_service.connection.client.listdir_attr.side_effect = FileNotFoundError
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch:
+        out = ds._list_directory("/notfound")
+        assert warn_patch.called
+        assert out == []
+
+
+def test_read_raises_generic_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with patch.object(ds, "_get_files_by_pattern", side_effect=Exception("fail")):
+        with pytest.raises(ReadError) as excinfo:
+            ds.read()
+        assert "fail" in str(excinfo.value)
+
+
+def test_create_raises_generic_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    with (
+        patch.object(ds.linked_service.connection.client, "open", side_effect=Exception("fail")),
+        patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch,
+    ):
+        with pytest.raises(CreateError) as excinfo:
+            ds.create()
+        assert err_patch.called
+        assert "fail" in str(excinfo.value)
+
+
+def test_purge_raises_generic_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    ds.settings.file_name = "file4.csv"
+    ds.settings.folder_path = "/data"
+    mock_linked_service.connection.client.remove.side_effect = Exception("fail")
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch:
+        with pytest.raises(PurgeError) as excinfo:
+            ds.purge()
+        assert err_patch.called
+        assert "fail" in str(excinfo.value)
+
+
+def test_list_raises_generic_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with (
+        patch.object(ds, "_get_files_by_pattern", side_effect=Exception("fail")),
+        patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch,
+    ):
+        with pytest.raises(ListError) as excinfo:
+            ds.list()
+        assert err_patch.called
+        assert "fail" in str(excinfo.value)
+
+
+def test_ensure_sftp_directory_raises_create_error(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with patch.object(ds.linked_service.connection.client, "stat", side_effect=Exception("fail")):
+        with pytest.raises(Exception) as excinfo:
+            ds._ensure_sftp_directory("/foo/bar")
+        assert "fail" in str(excinfo.value)
+
+
+def test__read_files_as_dataframe_raises_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    attr = MagicMock()
+    attr.filename = "foo.txt"
+    mock_linked_service.connection.open.return_value.__enter__.side_effect = Exception("fail")
+    with (
+        patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning"),
+        patch.object(ds.deserializer, "deserialize", side_effect=Exception("fail")),
+    ):
+        with pytest.raises(Exception) as excinfo:
+            ds._read_files_as_dataframe([attr])
+        assert "fail" in str(excinfo.value)
+
+
+def test__get_files_by_pattern_raises_exception(mock_linked_service):
+    ds = make_dataset(mock_linked_service)
+    with patch.object(ds, "_list_directory", side_effect=Exception("fail")):
+        try:
+            ds._get_files_by_pattern("/data", "*.csv")
+        except Exception as e:
+            assert "fail" in str(e)
