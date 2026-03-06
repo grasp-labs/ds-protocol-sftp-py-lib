@@ -7,13 +7,20 @@ SFTP Dataset
 This module implements a dataset for SFTP connections.
 
 Example:
-    >>> from ds_protocol_sftp_py_lib.enums import AuthType
-    >>> from ds_protocol_sftp_py_lib.linked_service import OAuth2AuthSettings
+    >>> from ds_protocol_sftp_py_lib import SftpDataset, SftpDatasetSettings, ReadSettings, ListSettings
+    >>> from ds_protocol_sftp_py_lib.linked_service import SftpLinkedService, SftpLinkedServiceSettings
+    >>> from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
+    >>> from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
+    >>> from ds_resource_plugin_py_lib.common.resource.dataset import DatasetStorageFormatType
     >>> dataset = SftpDataset(
     ...     deserializer=PandasDeserializer(format=DatasetStorageFormatType.JSON),
     ...     serializer=PandasSerializer(format=DatasetStorageFormatType.JSON),
     ...     settings=SftpDatasetSettings(
-    ...         ...
+    ...         folder_path="/path/to/dataset",
+    ...         file_name="dataset_*.json",
+    ...         read=ReadSettings(
+    ...             read_as_collection=True,
+    ...         )
     ...     ),
     ...     linked_service=SftpLinkedService(
     ...         settings=SftpLinkedServiceSettings(
@@ -39,7 +46,7 @@ import fnmatch
 import mimetypes
 import posixpath
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import PureWindowsPath
 from typing import Any, Generic, TypeVar
 
 import pandas as pd
@@ -191,7 +198,8 @@ class SftpDataset(
                 logger.info("No input data provided.")  # type: ignore
                 return
 
-            with self.linked_service.connection.client.open(filename=self.settings.file_name, mode="wb") as remote_file:
+            remote_path = posixpath.join(self.settings.folder_path, self.settings.file_name)
+            with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
                 logger.info(f"Creating file on SFTP server: {self.settings.file_name} at folder: {self.settings.folder_path}")
                 remote_file.write(self.serializer.serialize(self.input))  # type: ignore
 
@@ -274,14 +282,11 @@ class SftpDataset(
 
             if self.settings.list.download:
                 logger.info("Downloading file content as part of listing operation.")
-                for file in files:
-                    logger.info(f"Downloading file: {file.filename} from SFTP server.")
-                    self.output["content"] = self.output.apply(
-                        lambda row: self.linked_service.connection.client.open(
-                            f"{self.settings.folder_path}/{row['file_name']}", mode="rb"
-                        ).read(),
-                        axis=1,
-                    )
+                self.output["content"] = self.output["file_name"].apply(
+                    lambda file_name: self.linked_service.connection.client.open(
+                        f"{self.settings.folder_path}/{file_name}", mode="rb"
+                    ).read()
+                )
         except FileNotFoundError as exc:
             logger.error(f"Directory: {self.settings.folder_path} not found on SFTP server.")
             raise ListError(
@@ -325,12 +330,8 @@ class SftpDataset(
         Returns:
             str: The full file path as a POSIX-style string.
         """
-        return str(
-            Path(
-                PureWindowsPath(self.settings.folder_path).as_posix(),
-                self.settings.file_name,
-            )
-        )
+        folder_posix = PureWindowsPath(self.settings.folder_path).as_posix()
+        return posixpath.join(folder_posix, self.settings.file_name)
 
     def _list_directory(self, path: str) -> builtins.list[SFTPAttributes]:
         """
@@ -342,11 +343,7 @@ class SftpDataset(
             list[SFTPAttributes]: A list of SFTPAttributes for the files in the directory.
         """
         logger.info(f"Listing files in SFTP directory: {path}")
-        try:
-            return self.linked_service.connection.client.listdir_attr(path)
-        except FileNotFoundError:
-            logger.warning(f"SFTP directory not found: {path}. Returning empty list.")
-            return []
+        return self.linked_service.connection.client.listdir_attr(path)
 
     def _get_files_by_pattern(self, path: str, fnmatch_pattern: str) -> builtins.list[SFTPAttributes]:
         """

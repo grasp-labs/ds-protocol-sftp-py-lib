@@ -306,10 +306,8 @@ def test_purge_file_not_found_logs_warning(mock_linked_service):
 def test_list_directory_file_not_found_logs_warning(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     mock_linked_service.connection.client.listdir_attr.side_effect = FileNotFoundError
-    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch:
-        out = ds._list_directory("/notfound")
-        assert warn_patch.called
-        assert out == []
+    with pytest.raises(FileNotFoundError):
+        ds._list_directory("/notfound")
 
 
 def test_read_raises_generic_exception(mock_linked_service):
