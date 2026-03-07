@@ -127,6 +127,10 @@ class Sftp:
             AuthenticationError: If authentication fails, host key validation fails, or SSH transport is unavailable.
             ConnectionError: For network errors or other connection issues.
         """
+        if self._client is not None:
+            logger.warning(f"Already connected to the SFTP server with host: {host}.")
+            return self._client
+
         pkey_obj = None
         if pkey:
             pkey_obj = self._load_private_key(private_key=pkey, passphrase=passphrase)

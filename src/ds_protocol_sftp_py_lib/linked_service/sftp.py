@@ -69,16 +69,16 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     username: str
     """Username for authentication."""
 
-    password: str | None = None
+    password: str | None = field(default=None, metadata={"mask": True})
     """Password for authentication."""
 
-    encrypted_credential: str
+    encrypted_credential: str = field(metadata={"mask": True})
     """Encrypted credential."""
 
-    private_key: str | None = None
+    private_key: str | None = field(default=None, metadata={"mask": True})
     """Private key for authentication."""
 
-    passphrase: str | None = None
+    passphrase: str | None = field(default=None, metadata={"mask": True})
     """Passphrase for private key."""
 
     timeout: float | None = None
