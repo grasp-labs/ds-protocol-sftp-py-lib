@@ -18,9 +18,6 @@ Example:
     ...     settings=SftpDatasetSettings(
     ...         folder_path="/path/to/dataset",
     ...         file_name="dataset_*.json",
-    ...         read=ReadSettings(
-    ...             read_as_collection=True,
-    ...         )
     ...     ),
     ...     linked_service=SftpLinkedService(
     ...         settings=SftpLinkedServiceSettings(
@@ -69,14 +66,6 @@ logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)
-class ReadSettings(Serializable):
-    """Settings for reading from the SFTP dataset."""
-
-    read_as_collection: bool = False
-    """Whether to read the files as a collection."""
-
-
-@dataclass(kw_only=True)
 class ListSettings(Serializable):
     """Settings for listing the SFTP dataset."""
 
@@ -93,9 +82,6 @@ class SftpDatasetSettings(DatasetSettings):
 
     file_name: str
     """Name of the file to read/write on the SFTP server."""
-
-    read: ReadSettings = field(default_factory=ReadSettings)
-    """Settings for reading from the SFTP dataset."""
 
     list: ListSettings = field(default_factory=ListSettings)
     """Settings for listing the SFTP dataset."""
@@ -153,10 +139,6 @@ class SftpDataset(
                 )
                 self.output = pd.DataFrame()
                 return
-
-            if self.settings.read.read_as_collection:
-                logger.info("Reading files as a collection.")
-                self.output = self._read_files_as_collection(files)
             else:
                 logger.info("Reading files from SFTP.")
                 self.output = self._read_files_as_dataframe(files)
@@ -169,7 +151,7 @@ class SftpDataset(
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
-                    "settings": self.settings.read.serialize(),
+                    "settings": self.settings.serialize(),
                 },
             ) from exc
         except Exception as exc:
@@ -179,7 +161,7 @@ class SftpDataset(
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
-                    "settings": self.settings.read.serialize(),
+                    "settings": self.settings.serialize(),
                 },
             ) from exc
 
@@ -201,7 +183,7 @@ class SftpDataset(
             remote_path = posixpath.join(self.settings.folder_path, self.settings.file_name)
             with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
                 logger.info(f"Creating file on SFTP server: {self.settings.file_name} at folder: {self.settings.folder_path}")
-                remote_file.write(self.serializer.serialize(self.input))  # type: ignore
+                remote_file.write(self.serializer(self.input))
 
         except FileNotFoundError as exc:
             logger.error("Target folder not found on SFTP server, cannot create file.")
@@ -236,25 +218,46 @@ class SftpDataset(
 
     def purge(self) -> None:
         """
-        Purge the dataset, which involves deleting the file from the SFTP server.
+        Purge the dataset, deleting all files matching the pattern from the SFTP server.
 
         Returns:
             None
 
         Raises:
-            PurgeError: If there is an error purging the file from the SFTP server
+            PurgeError: If there is an error purging files from the SFTP server
         """
         try:
-            file_path = f"{self.settings.folder_path}/{self.settings.file_name}"
-            logger.info(f"Purging file from SFTP server: {file_path}")
-            self.linked_service.connection.client.remove(file_path)
-        except FileNotFoundError:
-            logger.warning(f"File not found for purging: {file_path}. It may have already been deleted.")
-            return
+            files = self._get_files_by_pattern(
+                path=self.settings.folder_path,
+                fnmatch_pattern=self.settings.file_name,
+            )
+            if not files:
+                logger.warning(
+                    f"No files found for purging matching pattern: {self.settings.file_name} "
+                    f"in folder: {self.settings.folder_path}"
+                )
+                return
+            for file in files:
+                file_path = f"{self.settings.folder_path}/{file.filename}"
+                logger.info(f"Purging file from SFTP server: {file_path}")
+                try:
+                    self.linked_service.connection.client.remove(file_path)
+                except FileNotFoundError:
+                    logger.warning(f"File not found for purging: {file_path}. It may have already been deleted.")
+                except Exception as exc:
+                    logger.error(f"Error purging file from SFTP server: {exc}")
+                    raise PurgeError(
+                        message=f"Error purging file from SFTP server: {exc}",
+                        details={
+                            "folder_path": self.settings.folder_path,
+                            "file_name": self.settings.file_name,
+                            "settings": self.settings.list.serialize(),
+                        },
+                    ) from exc
         except Exception as exc:
-            logger.error(f"Error purging file from SFTP server: {exc}")
+            logger.error(f"Error purging files from SFTP server: {exc}")
             raise PurgeError(
-                message=f"Error purging file from SFTP server: {exc}",
+                message=f"Error purging files from SFTP server: {exc}",
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
@@ -404,48 +407,6 @@ class SftpDataset(
             except FileNotFoundError:
                 self.linked_service.connection.client.mkdir(directory)
 
-    def _read_files_as_collection(self, files: builtins.list[SFTPAttributes]) -> pd.DataFrame:
-        """
-        Read multiple files from the SFTP server as a collection.
-
-        Args:
-            files (list[SFTPAttributes]): List of SFTPAttributes for the files to read.
-
-        Returns:
-            pd.DataFrame: The combined data from the files as a single DataFrame.
-        """
-        dfs = []
-        for file in files:
-            file_path = f"{self.settings.folder_path}/{file.filename}"
-            logger.info(f"Reading file from SFTP server: {file_path}")
-            with self.linked_service.connection.client.open(file_path, "rb") as remote_file:
-                file_location = (
-                    f"sftp://{self.linked_service.settings.username}@"
-                    f"{self.linked_service.settings.host}:"
-                    f"{self.linked_service.settings.port}/"
-                    f"{file_path}"
-                )
-                content_type, _ = mimetypes.guess_type(file.filename)
-                df = pd.DataFrame(
-                    {
-                        "file_name": [file.filename],
-                        "file_path": [f"{self.settings.folder_path}/{file.filename}"],
-                        "file_uri": [file_location],
-                        "content_type": [content_type or "application/octet-stream"],
-                        "file_size": [file.st_size],
-                        "user_id": [file.st_uid],
-                        "group_id": [file.st_gid],
-                        "file_permissions": [file.st_mode],
-                        "last_accessed_time": [file.st_atime],
-                        "last_modified_time": [file.st_mtime],
-                        "content": [remote_file.read()],
-                    }
-                )
-                dfs.append(df)
-        if not dfs:
-            return pd.DataFrame()
-        return pd.concat(dfs)
-
     def _read_files_as_dataframe(self, files: builtins.list[SFTPAttributes]) -> pd.DataFrame:
         """
         Read the dataset from the SFTP server as a dataframe.
@@ -461,7 +422,7 @@ class SftpDataset(
             file_path = f"{self.settings.folder_path}/{file.filename}"
             logger.info(f"Reading file from SFTP server: {file_path}")
             with self.linked_service.connection.client.open(file_path, "rb") as remote_file:
-                df = self.deserializer.deserialize(remote_file.read())  # type: ignore
+                df = self.deserializer(remote_file.read())
                 dfs.append(df)
 
         if not dfs:
@@ -469,7 +430,7 @@ class SftpDataset(
             return pd.DataFrame()
         else:
             logger.info(f"Successfully read {len(dfs)} files as dataframes. Concatenating into a single dataframe.")
-            return pd.concat(dfs, ignore_index=True)  # type: ignore
+            return pd.concat(dfs, ignore_index=True)
 
     def _list_directory_files(self, files: builtins.list[SFTPAttributes]) -> pd.DataFrame:
         """

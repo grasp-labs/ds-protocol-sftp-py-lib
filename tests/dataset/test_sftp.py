@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError
 
-from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, ReadSettings, SftpDataset, SftpDatasetSettings
+from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, SftpDataset, SftpDatasetSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
 
@@ -40,12 +40,11 @@ def mock_linked_service():
     return service
 
 
-def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", read_as_collection=False, download=False):
+def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", download=False):
     """Helper function to create an SftpDataset with specified settings."""
     settings = SftpDatasetSettings(
         folder_path=folder_path,
         file_name=file_name,
-        read=ReadSettings(read_as_collection=read_as_collection),
         list=ListSettings(download=download),
     )
     return SftpDataset(
@@ -104,7 +103,9 @@ def test_read_files_as_dataframe(mock_linked_service):
     mock_file.read.return_value = b"col1,col2\n1,2"
     mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
     ds = make_dataset(mock_linked_service)
-    with patch.object(ds.deserializer, "deserialize", return_value=pd.DataFrame({"col1": [1], "col2": [2]})):
+    with patch(
+        "ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", return_value=pd.DataFrame({"col1": [1], "col2": [2]})
+    ):
         ds.read()
         assert isinstance(ds.output, pd.DataFrame)
         assert "col1" in ds.output.columns
@@ -116,7 +117,7 @@ def test_create_file_success(mock_linked_service):
     ds.input = pd.DataFrame({"a": [1]})
     mock_file = MagicMock()
     mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
-    with patch.object(ds.serializer, "serialize", return_value=b"serialized"):
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasSerializer.__call__", return_value=b"serialized"):
         ds.create()
         mock_file.write.assert_called_once_with(b"serialized")
 
@@ -124,11 +125,21 @@ def test_create_file_success(mock_linked_service):
 def test_purge_file_success(mock_linked_service):
     """Test purging a file from the SFTP dataset successfully."""
     ds = make_dataset(mock_linked_service)
-    ds.settings.file_name = "file4.csv"
+    ds.settings.file_name = "file*.csv"
     ds.settings.folder_path = "/data"
-    ds.linked_service.connection.client.remove = MagicMock()
-    ds.purge()
-    ds.linked_service.connection.client.remove.assert_called_once()
+    # Mock two files returned by _get_files_by_pattern
+    attr1 = MagicMock()
+    attr1.filename = "file1.csv"
+    attr2 = MagicMock()
+    attr2.filename = "file2.csv"
+    with patch.object(ds, "_get_files_by_pattern", return_value=[attr1, attr2]):
+        ds.linked_service.connection.client.remove = MagicMock()
+        ds.purge()
+        # Should be called for both files
+        actual_calls = ds.linked_service.connection.client.remove.call_args_list
+        assert len(actual_calls) == 2
+        assert any("file1.csv" in str(call) for call in actual_calls)
+        assert any("file2.csv" in str(call) for call in actual_calls)
 
 
 def test_list_file_not_found_raises_list_error(mock_linked_service):
@@ -157,9 +168,12 @@ def test_create_file_not_found_raises_create_error(mock_linked_service):
 def test_purge_file_not_found_is_noop(mock_linked_service):
     """Test that purging a file from the SFTP dataset does not raise an error when the file is not found."""
     ds = make_dataset(mock_linked_service)
-    ds.linked_service.connection.client.remove.side_effect = FileNotFoundError
-    # Should not raise
-    ds.purge()
+    attr = MagicMock()
+    attr.filename = "file4.csv"
+    with patch.object(ds, "_get_files_by_pattern", return_value=[attr]):
+        ds.linked_service.connection.client.remove.side_effect = FileNotFoundError
+        # Should not raise
+        ds.purge()
 
 
 def test_update_not_implemented(mock_linked_service):
@@ -218,26 +232,7 @@ def test__read_files_as_collection_and_dataframe_empty(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     # Should return empty DataFrame if no files
     with patch.object(ds, "linked_service"):
-        assert ds._read_files_as_collection([]).empty
         assert ds._read_files_as_dataframe([]).empty
-
-
-def test__read_files_as_collection_handles_file(mock_linked_service):
-    ds = make_dataset(mock_linked_service)
-    attr = MagicMock()
-    attr.filename = "foo.txt"
-    attr.st_size = 1
-    attr.st_uid = 1
-    attr.st_gid = 1
-    attr.st_mode = 0o644
-    attr.st_atime = 1
-    attr.st_mtime = 2
-    mock_file = MagicMock()
-    mock_file.read.return_value = b"abc"
-    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
-    with patch("pandas.DataFrame", wraps=pd.DataFrame) as df_patch:
-        ds._read_files_as_collection([attr])
-        assert df_patch.called
 
 
 def test__read_files_as_dataframe_handles_file(mock_linked_service):
@@ -247,7 +242,7 @@ def test__read_files_as_dataframe_handles_file(mock_linked_service):
     mock_file = MagicMock()
     mock_file.read.return_value = b"abc"
     mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
-    with patch.object(ds.deserializer, "deserialize", return_value=pd.DataFrame({"a": [1]})):
+    with patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", return_value=pd.DataFrame({"a": [1]})):
         out = ds._read_files_as_dataframe([attr])
         assert isinstance(out, pd.DataFrame)
 
@@ -295,12 +290,13 @@ def test_create_no_input_logs_info(mock_linked_service):
 
 def test_purge_file_not_found_logs_warning(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    ds.settings.file_name = "file4.csv"
-    ds.settings.folder_path = "/data"
-    mock_linked_service.connection.client.remove.side_effect = FileNotFoundError
-    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch:
-        ds.purge()
-        assert warn_patch.called
+    attr = MagicMock()
+    attr.filename = "file4.csv"
+    with patch.object(ds, "_get_files_by_pattern", return_value=[attr]):
+        mock_linked_service.connection.client.remove.side_effect = FileNotFoundError
+        with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning") as warn_patch:
+            ds.purge()
+            assert warn_patch.called
 
 
 def test_list_directory_file_not_found_logs_warning(mock_linked_service):
@@ -333,14 +329,15 @@ def test_create_raises_generic_exception(mock_linked_service):
 
 def test_purge_raises_generic_exception(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    ds.settings.file_name = "file4.csv"
-    ds.settings.folder_path = "/data"
-    mock_linked_service.connection.client.remove.side_effect = Exception("fail")
-    with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch:
-        with pytest.raises(PurgeError) as excinfo:
-            ds.purge()
-        assert err_patch.called
-        assert "fail" in str(excinfo.value)
+    attr = MagicMock()
+    attr.filename = "file4.csv"
+    with patch.object(ds, "_get_files_by_pattern", return_value=[attr]):
+        mock_linked_service.connection.client.remove.side_effect = Exception("fail")
+        with patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch:
+            with pytest.raises(PurgeError) as excinfo:
+                ds.purge()
+            assert err_patch.called
+            assert "fail" in str(excinfo.value)
 
 
 def test_list_raises_generic_exception(mock_linked_service):
@@ -367,10 +364,13 @@ def test__read_files_as_dataframe_raises_exception(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     attr = MagicMock()
     attr.filename = "foo.txt"
-    mock_linked_service.connection.open.return_value.__enter__.side_effect = Exception("fail")
+    # Make open/read work so deserializer is called
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"abc"
+    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
     with (
         patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning"),
-        patch.object(ds.deserializer, "deserialize", side_effect=Exception("fail")),
+        patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", side_effect=Exception("fail")),
     ):
         with pytest.raises(Exception) as excinfo:
             ds._read_files_as_dataframe([attr])
