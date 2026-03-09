@@ -38,7 +38,7 @@ def make_settings():
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
 def test_connect_sets_connection(mock_sftp):
-    """Verify that connect method sets the _connection attribute from the provider's connect return value."""
+    """Verify that connect() opens a connection and sets the connection property."""
     mock_instance = MagicMock()
     mock_client = MagicMock()
     mock_instance.connect.return_value = mock_client
@@ -55,7 +55,7 @@ def test_connect_sets_connection(mock_sftp):
 
 @patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
 def test_connection_property_raises_when_none(mock_sftp):
-    """Verify that accessing the connection property raises ConnectionError when _connection is None."""
+    """Verify that accessing the connection property raises ConnectionError."""
     svc = SftpLinkedService(
         id="test_id",
         name="test_name",
@@ -80,7 +80,7 @@ def test_test_connection_success(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = mock_instance
-    svc._connection = mock_instance._client
+    assert svc.connection is mock_instance
     result = svc.test_connection()
     assert result == (True, "Connection successfully tested")
 
@@ -98,7 +98,7 @@ def test_test_connection_failure(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = mock_instance
-    svc._connection = mock_instance
+    assert svc.connection is mock_instance
     result = svc.test_connection()
     assert result == (False, "Could not get current working directory")
 
@@ -116,7 +116,7 @@ def test_test_connection_exception(mock_sftp):
         settings=make_settings(),
     )
     svc._sftp = mock_instance
-    svc._connection = mock_instance
+    assert svc.connection is mock_instance
     result = svc.test_connection()
     assert result[0] is False
     assert "fail" in result[1]
@@ -135,7 +135,6 @@ def test_connect_when_already_connected(mock_sftp):
         version="1.0.0",
         settings=make_settings(),
     )
-    svc._connection = MagicMock()  # Simulate already connected
     svc._sftp = mock_instance
     svc.connect()
     mock_instance.connect.assert_called_once()
@@ -178,10 +177,9 @@ def test_test_connection_calls_connect_when_sftp_none(mock_sftp):
     )
     svc._sftp = None
     with patch.object(svc, "connect") as mock_connect:
-        # After connect, set up _sftp and _connection for the rest of the method
+
         def after_connect():
             svc._sftp = mock_instance
-            svc._connection = mock_client
 
         mock_connect.side_effect = after_connect
         result = svc.test_connection()

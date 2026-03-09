@@ -22,7 +22,7 @@ Example:
     ...         private_key=None,
     ...         passphrase=None,
     ...         timeout=30.0,
-    ...         host_key_fingerprint=None,
+    ...         host_key_fingerprint="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99",
     ...         host_key_validation=True,
     ...         port=22,
     ...     ),
@@ -33,7 +33,6 @@ Example:
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-from ds_common_logger_py_lib import Logger
 from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedService, LinkedServiceSettings
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
@@ -42,8 +41,6 @@ from paramiko import MissingHostKeyPolicy
 
 from ..enums import ResourceType
 from ..utils.sftp.provider import Sftp
-
-logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)

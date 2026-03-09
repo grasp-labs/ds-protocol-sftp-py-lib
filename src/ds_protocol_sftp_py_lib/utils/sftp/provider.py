@@ -40,8 +40,7 @@ class Sftp:
     server using SSH.
 
     The class manages the underlying :class:`paramiko.SSHClient` and SFTP session, and
-    provides convenience methods for connecting, listing directories, moving files and
-    accessing the raw SSH/SFTP clients when needed.
+    provides convenience methods for connecting and accessing the raw SSH/SFTP clients when needed.
 
     An existing :class:`paramiko.SFTPClient` can be injected for cases where the
     SSH/SFTP session is created externally.
@@ -63,7 +62,7 @@ class Sftp:
             passphrase=None,
             host_key_fingerprint=None,
         )
-        files = sftp.list_directory("/remote/path")
+        files = sftp.client.listdir("/remote/path")
         sftp.close()
 
         # Using as a context manager
@@ -80,7 +79,7 @@ class Sftp:
                 timeout=None,
                 policy=None,
             )
-            files = sftp.list_directory("/remote/path")
+            files = sftp.client.listdir("/remote/path")
     """
 
     def __init__(self, client: paramiko.SFTPClient | None = None):
@@ -135,7 +134,7 @@ class Sftp:
         if pkey:
             pkey_obj = self._load_private_key(private_key=pkey, passphrase=passphrase)
 
-        if not host_key_validation:
+        if host_key_validation:
             if policy is None:
                 policy = AutoAddPolicy()
             self._ssh.set_missing_host_key_policy(policy)

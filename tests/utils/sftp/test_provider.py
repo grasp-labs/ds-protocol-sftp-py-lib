@@ -8,9 +8,7 @@ Covers:
 - Sftp class initialization and default state.
 - Client property behavior when connection is not initialized.
 - Idempotency of close method.
-- Directory listing and file retrieval methods calling the underlying client correctly.
-- Move method invoking the client's rename functionality.
-- Error handling for list_directory, client property, move, and private key loading.
+- Error handling for client property and private key loading.
 - Sftp.connect: success, authentication error, transport missing, host key validation failure, general exception, and pkey usage.
 - Context manager (__enter__, __exit__) and close method.
 - SSH property access.
@@ -135,7 +133,7 @@ def test_connect_transport_missing(mock_ssh):
 
 @patch("paramiko.SSHClient")
 def test_connect_host_key_validation_failure(mock_ssh):
-    """Verify that connect raises ConnectionError when host key fingerprint does not match."""
+    """Verify that connect raises AuthenticationError when host key fingerprint does not match."""
     mock_ssh_instance = MagicMock()
     mock_transport = MagicMock()
     mock_key = MagicMock()
@@ -146,21 +144,19 @@ def test_connect_host_key_validation_failure(mock_ssh):
     mock_ssh.return_value = mock_ssh_instance
     sftp = Sftp()
     # Patch paramiko.RSAKey to avoid real key parsing
-    with patch("paramiko.RSAKey", MagicMock()) as mock_rsakey:
-        mock_rsakey.return_value.get_name.return_value = "ssh-rsa"
-        with pytest.raises(AuthenticationError):
-            sftp.connect(
-                host="host",
-                port=22,
-                username="user",
-                password="pass",
-                passphrase=None,
-                host_key_fingerprint="notmatching",
-                pkey=None,
-                host_key_validation=True,
-                timeout=None,
-                policy=None,
-            )
+    with pytest.raises(AuthenticationError):
+        sftp.connect(
+            host="host",
+            port=22,
+            username="user",
+            password="pass",
+            passphrase=None,
+            host_key_fingerprint="notmatching",
+            pkey=None,
+            host_key_validation=True,
+            timeout=None,
+            policy=None,
+        )
 
 
 @patch("paramiko.SSHClient")
@@ -228,7 +224,7 @@ def test_connect_host_key_validation_success(mock_ssh):
     mock_ssh_instance.open_sftp.return_value = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
     sftp = Sftp()
-    with patch("paramiko.RSAKey", MagicMock()) as mock_rsakey, patch("base64.b64decode", MagicMock(return_value=b"abc")):
+    with patch("paramiko.RSAKey", MagicMock()) as mock_rsakey:
         mock_rsakey.return_value.get_name.return_value = "ssh-rsa"
         result = sftp.connect(
             host="host",
@@ -297,10 +293,16 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
 
 
 @patch("paramiko.SSHClient")
-def test_connect_sets_missing_host_key_policy_when_validation_disabled(mock_ssh):
-    """Verify connect sets missing host key policy when host_key_validation is False."""
+def test_connect_sets_missing_host_key_policy_when_validation(mock_ssh):
+    """Verify connect sets missing host key policy when host_key_validation is True."""
     mock_ssh_instance = MagicMock()
+    mock_key = MagicMock()
     mock_ssh.return_value = mock_ssh_instance
+    mock_key.get_fingerprint.return_value = b"abc"
+    # Mock the transport and remote_server_key chain
+    mock_transport = MagicMock()
+    mock_ssh_instance.get_transport.return_value = mock_transport
+    mock_transport.get_remote_server_key.return_value = mock_key
     sftp = Sftp()
     sftp._ssh = mock_ssh_instance
     sftp.connect(
@@ -309,9 +311,9 @@ def test_connect_sets_missing_host_key_policy_when_validation_disabled(mock_ssh)
         username="user",
         password="pass",
         passphrase=None,
-        host_key_fingerprint=None,
+        host_key_fingerprint="YWJj",
         pkey=None,
-        host_key_validation=False,
+        host_key_validation=True,
         timeout=None,
         policy=None,
     )
