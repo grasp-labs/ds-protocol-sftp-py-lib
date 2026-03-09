@@ -134,10 +134,9 @@ class Sftp:
         if pkey:
             pkey_obj = self._load_private_key(private_key=pkey, passphrase=passphrase)
 
-        if host_key_validation:
-            if policy is None:
-                policy = AutoAddPolicy()
-            self._ssh.set_missing_host_key_policy(policy)
+        if policy is None:
+            policy = AutoAddPolicy()
+        self._ssh.set_missing_host_key_policy(policy)
 
         # Pre-load expected host key if host_key_validation is enabled
         if host_key_validation and host_key_fingerprint is None:
