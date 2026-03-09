@@ -7,7 +7,7 @@ SFTP Dataset
 This module implements a dataset for SFTP connections.
 
 Example:
-    >>> from ds_protocol_sftp_py_lib import SftpDataset, SftpDatasetSettings, ReadSettings, ListSettings
+    >>> from ds_protocol_sftp_py_lib.dataset import SftpDataset, SftpDatasetSettings
     >>> from ds_protocol_sftp_py_lib.linked_service import SftpLinkedService, SftpLinkedServiceSettings
     >>> from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
     >>> from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
@@ -180,9 +180,9 @@ class SftpDataset(
                 logger.info("No input data provided.")  # type: ignore
                 return
 
-            remote_path = posixpath.join(self.settings.folder_path, self.settings.file_name)
+            remote_path = self._get_folder_and_file_path()
             with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
-                logger.info(f"Creating file on SFTP server: {self.settings.file_name} at folder: {self.settings.folder_path}")
+                logger.info(f"Creating file on SFTP server: {remote_path}")
                 remote_file.write(self.serializer(self.input))
 
         except FileNotFoundError as exc:

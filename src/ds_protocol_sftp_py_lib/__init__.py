@@ -17,5 +17,9 @@ Example
 
 from importlib.metadata import version
 
+from .dataset import SftpDataset, SftpDatasetSettings
+from .linked_service import SftpLinkedService, SftpLinkedServiceSettings
+
 __version__ = version("ds-protocol-sftp-py-lib")
-__all__ = ["__version__"]
+
+__all__ = ["SftpDataset", "SftpDatasetSettings", "SftpLinkedService", "SftpLinkedServiceSettings", "__version__"]

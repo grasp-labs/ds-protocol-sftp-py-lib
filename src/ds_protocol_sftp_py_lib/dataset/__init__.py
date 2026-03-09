@@ -17,9 +17,6 @@ Example:
     ...     settings=SftpDatasetSettings(
     ...         folder_path="/path/to/dataset.csv",
     ...         file_name="dataset.csv",
-    ...         read=ReadSettings(
-    ...             read_as_a_collection=False,
-    ...         ),
     ...     ),
     ...     linked_service=SftpLinkedService(
     ...         id=uuid.uuid4(),
@@ -36,3 +33,10 @@ Example:
     ... dataset.read()
     ... data = dataset.output
 """
+
+from .sftp import SftpDataset, SftpDatasetSettings
+
+__all__ = [
+    "SftpDataset",
+    "SftpDatasetSettings",
+]

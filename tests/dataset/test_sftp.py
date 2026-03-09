@@ -101,7 +101,7 @@ def test_read_files_as_dataframe(mock_linked_service):
     mock_linked_service.connection.client.listdir_attr.return_value = [attr]
     mock_file = MagicMock()
     mock_file.read.return_value = b"col1,col2\n1,2"
-    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
     ds = make_dataset(mock_linked_service)
     with patch(
         "ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", return_value=pd.DataFrame({"col1": [1], "col2": [2]})
@@ -241,7 +241,7 @@ def test__read_files_as_dataframe_handles_file(mock_linked_service):
     attr.filename = "foo.txt"
     mock_file = MagicMock()
     mock_file.read.return_value = b"abc"
-    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
     with patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", return_value=pd.DataFrame({"a": [1]})):
         out = ds._read_files_as_dataframe([attr])
         assert isinstance(out, pd.DataFrame)
@@ -367,7 +367,7 @@ def test__read_files_as_dataframe_raises_exception(mock_linked_service):
     # Make open/read work so deserializer is called
     mock_file = MagicMock()
     mock_file.read.return_value = b"abc"
-    mock_linked_service.connection.open.return_value.__enter__.return_value = mock_file
+    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
     with (
         patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.warning"),
         patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasDeserializer.__call__", side_effect=Exception("fail")),
