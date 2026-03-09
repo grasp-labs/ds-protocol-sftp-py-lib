@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import AuthenticationError, ConnectionError
+from paramiko import SSHClient
 from paramiko.ssh_exception import AuthenticationException
 
 from ds_protocol_sftp_py_lib.utils.sftp.provider import Sftp
@@ -397,3 +398,88 @@ def test_close_only_ssh():
     sftp._ssh = mock_ssh
     sftp.close()
     mock_ssh.close.assert_called_once()
+
+
+@patch("paramiko.SSHClient")
+def test_connect_returns_client_when_already_connected(mock_ssh):
+    """Covers: connect early return when already connected."""
+    sftp = Sftp()
+    dummy_client = MagicMock()
+    sftp._client = dummy_client
+    result = sftp.connect(
+        host="host",
+        port=22,
+        username="user",
+        password="pass",
+        passphrase=None,
+        host_key_fingerprint="YWJj",
+        pkey=None,
+        host_key_validation=False,
+        timeout=None,
+        policy=None,
+    )
+    assert result is dummy_client
+
+
+@patch("paramiko.SSHClient")
+def test_connect_host_key_validation_missing_fingerprint(mock_ssh):
+    """Covers: host_key_validation True and host_key_fingerprint None raises ConnectionError."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.close = MagicMock()
+    with pytest.raises(ConnectionError) as excinfo:
+        sftp.connect(
+            host="host",
+            port=22,
+            username="user",
+            password="pass",
+            passphrase=None,
+            host_key_fingerprint=None,
+            pkey=None,
+            host_key_validation=True,
+            timeout=None,
+            policy=None,
+        )
+    sftp.close.assert_called_once()
+    assert "no fingerprint" in str(excinfo.value)
+
+
+@patch("paramiko.SSHClient")
+def test_connect_transport_none_raises_auth_error(mock_ssh):
+    """Covers: get_transport returns None, raises AuthenticationError."""
+    mock_ssh_instance = MagicMock()
+    mock_ssh_instance.get_transport.return_value = None
+    mock_ssh.return_value = mock_ssh_instance
+    sftp = Sftp()
+    sftp._ssh = mock_ssh_instance
+    sftp.close = MagicMock()
+    with pytest.raises(AuthenticationError):
+        sftp.connect(
+            host="host",
+            port=22,
+            username="user",
+            password="pass",
+            passphrase=None,
+            host_key_fingerprint="YWJj",
+            pkey=None,
+            host_key_validation=True,
+            timeout=None,
+            policy=None,
+        )
+    sftp.close.assert_called_once()
+
+
+def test_close_covers_all_branches():
+    """Covers: close method when both _client and _ssh are set."""
+    sftp = Sftp()
+    mock_client = MagicMock()
+    mock_ssh = MagicMock()
+    sftp._client = mock_client
+    sftp._ssh = mock_ssh
+    sftp.close()
+    mock_client.close.assert_called_once()
+    mock_ssh.close.assert_called_once()
+    assert sftp._client is None
+    assert isinstance(sftp._ssh, type(SSHClient()))

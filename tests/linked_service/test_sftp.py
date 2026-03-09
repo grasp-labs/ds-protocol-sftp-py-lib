@@ -202,3 +202,33 @@ def test_close_calls_sftp_close_and_sets_none(mock_sftp):
     svc.close()
     mock_instance.close.assert_called_once()
     assert svc._sftp is None
+
+
+@patch("ds_protocol_sftp_py_lib.linked_service.sftp.Sftp")
+def test_test_connection_sftp_none_after_connect(mock_sftp):
+    """Covers: test_connection() when _sftp is None after connect()."""
+    svc = SftpLinkedService(
+        id="test_id",
+        name="test_name",
+        version="1.0.0",
+        settings=make_settings(),
+    )
+    # Patch connect to not set _sftp
+    with patch.object(svc, "connect") as mock_connect:
+        svc._sftp = None
+        result = svc.test_connection()
+        mock_connect.assert_called_once()
+        assert result == (False, "SFTP connection is not initialized after connect()")
+
+
+def test_close_when_sftp_none():
+    """Covers: close() when _sftp is None (should not raise)."""
+    svc = SftpLinkedService(
+        id="test_id",
+        name="test_name",
+        version="1.0.0",
+        settings=make_settings(),
+    )
+    svc._sftp = None
+    # Should not raise
+    svc.close()
