@@ -25,7 +25,6 @@ def make_settings():
         host="localhost",
         username="user",
         password="pass",
-        encrypted_credential="enc",
         private_key=None,
         passphrase=None,
         timeout=1.0,

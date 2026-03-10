@@ -17,7 +17,6 @@ Example:
     ...         host="sftp.example.com",
     ...         username="user",
     ...         password="password123",
-    ...         encrypted_credential="encrypted_cred",
     ...         private_key=None,
     ...         passphrase=None,
     ...         timeout=30.0,

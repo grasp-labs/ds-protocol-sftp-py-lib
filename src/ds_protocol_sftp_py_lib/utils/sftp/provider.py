@@ -273,50 +273,56 @@ class Sftp:
         Raises:
             ConnectionError: If the socket connection cannot be established.
         """
-        sock = socket.create_connection((host, port), timeout=timeout)
-        transport = paramiko.Transport(sock)
-
-        transport.start_client(timeout=timeout)
-        server_key = transport.get_remote_server_key()
-        actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
-        if actual_fingerprint != host_key_fingerprint:
-            transport.close()
-            raise AuthenticationError(
-                message="Host key fingerprint does not match.",
-                details={
-                    "host": host,
-                    "username": username,
-                    "port": port,
-                    "expected_fingerprint": host_key_fingerprint,
-                    "actual_fingerprint": actual_fingerprint,
-                },
-            )
-        # Authenticate after fingerprint validation
+        sock = None
+        transport = None
         try:
-            if pkey_obj:
-                transport.auth_publickey(username, pkey_obj)
-            elif password:
-                transport.auth_password(username, password)
-            else:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            transport = paramiko.Transport(sock)
+            transport.start_client(timeout=timeout)
+            server_key = transport.get_remote_server_key()
+            actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
+            if actual_fingerprint != host_key_fingerprint:
                 raise AuthenticationError(
-                    message="No authentication method provided. Please provide either a password or a private key.",
+                    message="Host key fingerprint does not match.",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                        "expected_fingerprint": host_key_fingerprint,
+                        "actual_fingerprint": actual_fingerprint,
+                    },
+                )
+            # Authenticate after fingerprint validation
+            try:
+                if pkey_obj:
+                    transport.auth_publickey(username, pkey_obj)
+                elif password:
+                    transport.auth_password(username, password)
+                else:
+                    raise AuthenticationError(
+                        message="No authentication method provided. Please provide either a password or a private key.",
+                        details={
+                            "host": host,
+                            "username": username,
+                            "port": port,
+                        },
+                    )
+            except ssh_exception.AuthenticationException as exc:
+                raise AuthenticationError(
+                    message=f"Failed to authenticate towards {host}",
                     details={
                         "host": host,
                         "username": username,
                         "port": port,
                     },
-                )
-        except ssh_exception.AuthenticationException as exc:
-            transport.close()
-            raise AuthenticationError(
-                message=f"Failed to authenticate towards {host}",
-                details={
-                    "host": host,
-                    "username": username,
-                    "port": port,
-                },
-            ) from exc
-        return paramiko.SFTPClient.from_transport(transport)
+                ) from exc
+            return paramiko.SFTPClient.from_transport(transport)
+        except Exception:
+            if transport is not None:
+                transport.close()
+            if sock is not None:
+                sock.close()
+            raise
 
     # ------ Properties ------
 

@@ -18,11 +18,10 @@ Example:
     ...         host="sftp.example.com",
     ...         username="user",
     ...         password="password123",
-    ...         encrypted_credential="encrypted_cred",
     ...         private_key=None,
     ...         passphrase=None,
     ...         timeout=30.0,
-    ...         host_key_fingerprint="SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf=",  # base64-encoded SHA256
+    ...         host_key_fingerprint="AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf==",
     ...         host_key_validation=True,
     ...         port=22,
     ...     ),
@@ -51,7 +50,6 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
         host (str): SFTP server hostname.
         username (str): Username for authentication.
         password (str | None): Password for authentication.
-        encrypted_credential (str): Encrypted credential.
         private_key (str | None): Private key for authentication.
         passphrase (str | None): Passphrase for private key.
         timeout (float | None): Connection timeout in seconds.
@@ -69,9 +67,6 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     password: str | None = field(default=None, metadata={"mask": True})
     """Password for authentication."""
 
-    encrypted_credential: str = field(metadata={"mask": True})
-    """Encrypted credential."""
-
     private_key: str | None = field(default=None, metadata={"mask": True})
     """Private key for authentication."""
 
@@ -82,7 +77,8 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     """Connection timeout in seconds."""
 
     host_key_fingerprint: str | None = None
-    """Expected host key fingerprint (base64-encoded SHA256, e.g., 'SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf=')."""
+    """Expected host key fingerprint (base64-encoded MD5, as produced by
+    Paramiko's get_fingerprint(); e.g., 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf==')."""
 
     host_key_validation: bool = True
     """Whether to validate host key."""
@@ -179,7 +175,7 @@ class SftpLinkedService(
     def test_connection(self) -> tuple[bool, str]:
         """Perform a lightweight health check against the SFTP backend.
 
-        Uses getcwd to verify connectivity without modifying data.
+        Uses the SFTP client's listdir method to check connectivity and authentication.
 
         Returns:
             tuple[bool, str]:
