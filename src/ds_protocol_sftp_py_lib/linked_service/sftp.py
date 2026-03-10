@@ -22,7 +22,7 @@ Example:
     ...         private_key=None,
     ...         passphrase=None,
     ...         timeout=30.0,
-    ...         host_key_fingerprint="aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99",
+    ...         host_key_fingerprint="SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf=",  # base64-encoded SHA256
     ...         host_key_validation=True,
     ...         port=22,
     ...     ),
@@ -82,7 +82,7 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     """Connection timeout in seconds."""
 
     host_key_fingerprint: str | None = None
-    """Expected host key fingerprint."""
+    """Expected host key fingerprint (base64-encoded SHA256, e.g., 'SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf=')."""
 
     host_key_validation: bool = True
     """Whether to validate host key."""

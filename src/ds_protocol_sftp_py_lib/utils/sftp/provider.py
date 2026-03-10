@@ -21,6 +21,7 @@ Example:
 
 import base64
 import io
+import socket
 from typing import Any
 
 import paramiko
@@ -104,7 +105,7 @@ class Sftp:
 
         The connection may use password authentication, private key authentication (with optional passphrase),
         or a combination, depending on the configuration. If host key validation is enabled, the remote server's
-        host key fingerprint is validated against the provided fingerprint.
+        host key fingerprint is validated against the provided fingerprint before authentication.
 
         Args:
             host (str): Hostname or IP address of the SFTP server.
@@ -134,73 +135,84 @@ class Sftp:
         if pkey:
             pkey_obj = self._load_private_key(private_key=pkey, passphrase=passphrase)
 
-        if policy is None:
-            policy = AutoAddPolicy()
-        self._ssh.set_missing_host_key_policy(policy)
-
-        # Pre-load expected host key if host_key_validation is enabled
-        if host_key_validation and host_key_fingerprint is None:
-            self.close()
-            raise ConnectionError(
-                message="Host key validation is enabled but no fingerprint was provided.",
-                details={
-                    "host": host,
-                    "username": username,
-                    "port": port,
-                },
-            )
-
-        try:
-            logger.info(f"Connecting to {host}")
-            self._ssh.connect(hostname=host, port=port, username=username, password=password, pkey=pkey_obj, timeout=timeout)
-        except ssh_exception.AuthenticationException as exc:
-            logger.error(f"Failed to authenticate to host: {host}: {exc}")
-            raise AuthenticationError(
-                message=f"Failed to authenticate towards {host}",
-                details={
-                    "host": host,
-                    "username": username,
-                    "port": port,
-                },
-            ) from exc
-        except Exception as exc:
-            # network errors, DNS, etc.
-            raise ConnectionError(
-                message=f"Failed to connect to {host}: {exc}",
-                details={"host": host, "username": username, "port": port},
-            ) from exc
-
-        # Get server's host key and validate fingerprint if required
-        transport = self._ssh.get_transport()
-        if not transport:
-            self.close()
-            raise AuthenticationError(
-                message="SSH transport not available.",
-                details={
-                    "host": host,
-                    "username": username,
-                    "port": port,
-                },
-            )
-
         if host_key_validation:
-            server_key = transport.get_remote_server_key()
-            actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
-            if actual_fingerprint != host_key_fingerprint:
+            if host_key_fingerprint is None:
                 self.close()
-                raise AuthenticationError(
-                    message="Host key fingerprint does not match.",
+                raise ConnectionError(
+                    message="Host key validation is enabled but no fingerprint was provided.",
                     details={
                         "host": host,
                         "username": username,
                         "port": port,
-                        "expected_fingerprint": host_key_fingerprint,
-                        "actual_fingerprint": actual_fingerprint,
                     },
                 )
-
-        self._client = self._ssh.open_sftp()
-        return self._client
+            # Secure flow: validate host key before authentication
+            try:
+                connected_client = self._connect_with_socket(
+                    host=host,
+                    port=port,
+                    timeout=timeout,
+                    username=username,
+                    password=password,
+                    pkey_obj=pkey_obj,
+                    host_key_fingerprint=host_key_fingerprint,
+                )
+                if connected_client is None:
+                    raise ConnectionError(
+                        message="Failed to establish SFTP connection after host key validation.",
+                        details={
+                            "host": host,
+                            "username": username,
+                            "port": port,
+                        },
+                    )
+                self._client = connected_client
+                return self._client
+            except Exception as exc:
+                raise ConnectionError(
+                    message=f"Failed to connect to {host} with host key validation: {exc}",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                    },
+                ) from exc
+        else:
+            # Legacy/less secure flow: use SSHClient and policy
+            if policy is None:
+                policy = AutoAddPolicy()
+            self._ssh.set_missing_host_key_policy(policy)
+            try:
+                logger.info(f"Connecting to {host}")
+                self._ssh.connect(hostname=host, port=port, username=username, password=password, pkey=pkey_obj, timeout=timeout)
+            except ssh_exception.AuthenticationException as exc:
+                logger.error(f"Failed to authenticate to host: {host}: {exc}")
+                raise AuthenticationError(
+                    message=f"Failed to authenticate towards {host}",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                    },
+                ) from exc
+            except Exception as exc:
+                raise ConnectionError(
+                    message=f"Failed to connect to {host}: {exc}",
+                    details={"host": host, "username": username, "port": port},
+                ) from exc
+            transport = self._ssh.get_transport()
+            if not transport:
+                self.close()
+                raise AuthenticationError(
+                    message="SSH transport not available.",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                    },
+                )
+            self._client = self._ssh.open_sftp()
+            return self._client
 
     # ------ Helper Functions ------
 
@@ -230,6 +242,81 @@ class Sftp:
                 "Please ensure you're providing a valid RSA private key "
                 "in PEM format.",
             ) from exc
+
+    def _connect_with_socket(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None,
+        username: str,
+        password: str | None,
+        pkey_obj: paramiko.PKey | None,
+        host_key_fingerprint: str,
+    ) -> paramiko.SFTPClient | None:
+        """
+        Establish a socket connection to the SFTP server and return a Paramiko SFTP client.
+
+        This method is used for the secure flow where host key validation is performed before authentication.
+
+        Args:
+            host (str): Hostname or IP address of the SFTP server.
+            port (int): Port number to connect to.
+            timeout (float | None): Optional connection timeout in seconds.
+            username (str): Username for authentication.
+            password (str | None): Password for authentication, if applicable.
+            pkey_obj (paramiko.PKey | None): Private key object for authentication, if applicable.
+            host_key_fingerprint (str): Expected host key fingerprint for validation.
+
+        Returns:
+            paramiko.SFTPClient: The SFTP client stored in the instance variable self._client.
+
+        Raises:
+            ConnectionError: If the socket connection cannot be established.
+        """
+        sock = socket.create_connection((host, port), timeout=timeout)
+        transport = paramiko.Transport(sock)
+
+        transport.start_client(timeout=timeout)
+        server_key = transport.get_remote_server_key()
+        actual_fingerprint = base64.b64encode(server_key.get_fingerprint()).decode()
+        if actual_fingerprint != host_key_fingerprint:
+            transport.close()
+            raise AuthenticationError(
+                message="Host key fingerprint does not match.",
+                details={
+                    "host": host,
+                    "username": username,
+                    "port": port,
+                    "expected_fingerprint": host_key_fingerprint,
+                    "actual_fingerprint": actual_fingerprint,
+                },
+            )
+        # Authenticate after fingerprint validation
+        try:
+            if pkey_obj:
+                transport.auth_publickey(username, pkey_obj)
+            elif password:
+                transport.auth_password(username, password)
+            else:
+                raise AuthenticationError(
+                    message="No authentication method provided. Please provide either a password or a private key.",
+                    details={
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                    },
+                )
+        except ssh_exception.AuthenticationException as exc:
+            transport.close()
+            raise AuthenticationError(
+                message=f"Failed to authenticate towards {host}",
+                details={
+                    "host": host,
+                    "username": username,
+                    "port": port,
+                },
+            ) from exc
+        return paramiko.SFTPClient.from_transport(transport)
 
     # ------ Properties ------
 

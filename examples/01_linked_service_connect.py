@@ -14,12 +14,13 @@ logger = Logger.get_logger(__name__, package=True)
 def main():
     """Main function to demonstrate connecting to an SFTP server using a linked service."""
     linked_service_settings = SftpLinkedServiceSettings(
-        host="sftp.example.com",
+        host="",
         port=22,
-        username="your_username",
-        password="your_password",
-        host_key_validation=True,
-        host_key_fingerprint="your_host_key_fingerprint",
+        username="",
+        password="",
+        encrypted_credential="",
+        host_key_validation=False,
+        host_key_fingerprint=None,
     )
     linked_service = SftpLinkedService(
         id=str(uuid4()),
