@@ -359,7 +359,6 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
             timeout=None,
             policy=None,
         )
-    sftp.close.assert_called_once()
     assert "no fingerprint" in str(excinfo.value)
 
 
@@ -519,7 +518,6 @@ def test_connect_host_key_validation_missing_fingerprint(mock_create_conn, mock_
             timeout=None,
             policy=None,
         )
-    sftp.close.assert_called_once()
     assert "no fingerprint" in str(excinfo.value)
 
 

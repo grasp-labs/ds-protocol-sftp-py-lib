@@ -190,14 +190,11 @@ class SftpLinkedService(
             self.connect()
             if self._sftp is None:
                 return False, "SFTP connection is not initialized after connect()"
-            # Lightweight health check: get current working directory
-            cwd = self._sftp.client.getcwd()
-            if cwd is not None:
+            directory = self._sftp.client.listdir(".")
+            if directory is not None:
                 return True, "Connection successfully tested"
-            else:
-                return False, "Could not get current working directory"
         except Exception as exc:
-            return False, str(exc)
+            return False, f"Failed to connect to SFTP server, error: {exc}"
 
     def close(self) -> None:
         """Close the linked service.

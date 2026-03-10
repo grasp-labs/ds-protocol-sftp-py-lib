@@ -137,7 +137,6 @@ class Sftp:
 
         if host_key_validation:
             if host_key_fingerprint is None:
-                self.close()
                 raise ConnectionError(
                     message="Host key validation is enabled but no fingerprint was provided.",
                     details={
@@ -148,6 +147,7 @@ class Sftp:
                 )
             # Secure flow: validate host key before authentication
             try:
+                logger.info(f"Connecting to {host}")
                 connected_client = self._connect_with_socket(
                     host=host,
                     port=port,
