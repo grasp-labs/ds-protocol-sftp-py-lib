@@ -36,7 +36,6 @@ from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedServi
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
 )
-from paramiko import MissingHostKeyPolicy
 
 from ..enums import ResourceType
 from ..utils.sftp.provider import Sftp
@@ -85,9 +84,6 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
 
     port: int = 22
     """SFTP server port."""
-
-    policy: MissingHostKeyPolicy | None = None
-    """Host key policy to use if host key validation is disabled."""
 
 
 SftpLinkedServiceSettingsType = TypeVar("SftpLinkedServiceSettingsType", bound=SftpLinkedServiceSettings)
@@ -169,7 +165,6 @@ class SftpLinkedService(
             pkey=self.settings.private_key,
             host_key_validation=self.settings.host_key_validation,
             timeout=self.settings.timeout,
-            policy=self.settings.policy,
         )
 
     def test_connection(self) -> tuple[bool, str]:

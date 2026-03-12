@@ -76,7 +76,6 @@ def test_connect_success_secure_flow(mock_connect_with_socket):
         pkey=None,
         host_key_validation=True,
         timeout=None,
-        policy=None,
     )
     mock_connect_with_socket.assert_called_once()
     assert result is mock_client
@@ -97,7 +96,6 @@ def test_connect_secure_flow_wraps_exception(mock_connect_with_socket):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     assert "Failed to connect to host" in str(excinfo.value) or "with host key validation" in str(excinfo.value)
 
@@ -128,7 +126,6 @@ def test_connect_authentication_error(mock_create_conn, mock_transport_cls):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
 
 
@@ -155,7 +152,6 @@ def test_connect_transport_missing(mock_create_conn, mock_transport_cls):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
 
 
@@ -183,7 +179,6 @@ def test_connect_host_key_validation_failure(mock_create_conn, mock_transport_cl
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
 
 
@@ -208,7 +203,6 @@ def test_connect_general_exception(mock_create_conn, mock_transport_cls):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     assert "network fail" in str(excinfo.value)
 
@@ -230,7 +224,6 @@ def test_connect_with_pkey_secure_flow(mock_connect_with_socket):
         pkey="dummy-key",
         host_key_validation=True,
         timeout=None,
-        policy=None,
     )
     sftp._load_private_key.assert_called_once()
     assert result is mock_client
@@ -252,7 +245,6 @@ def test_connect_host_key_validation_success_secure_flow(mock_connect_with_socke
         pkey="",
         host_key_validation=True,
         timeout=None,
-        policy=None,
     )
     assert result is mock_client
 
@@ -357,7 +349,6 @@ def test_connect_host_key_validation_missing_fingerprint_closes(mock_ssh):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     assert "no fingerprint" in str(excinfo.value)
 
@@ -389,7 +380,6 @@ def test_connect_sets_missing_host_key_policy_when_validation(mock_create_conn, 
         pkey=None,
         host_key_validation=True,
         timeout=None,
-        policy=None,
     )
 
 
@@ -419,7 +409,6 @@ def test_connect_fingerprint_mismatch_calls_close_and_raises(mock_create_conn, m
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     # Optionally, check that the error message indicates a fingerprint mismatch
     assert "Host key fingerprint does not match" in str(exc_info.value)
@@ -490,7 +479,6 @@ def test_connect_returns_client_when_already_connected(mock_ssh):
         pkey=None,
         host_key_validation=False,
         timeout=None,
-        policy=None,
     )
     assert result is dummy_client
 
@@ -516,7 +504,6 @@ def test_connect_host_key_validation_missing_fingerprint(mock_create_conn, mock_
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     assert "no fingerprint" in str(excinfo.value)
 
@@ -543,7 +530,6 @@ def test_connect_transport_none_raises_auth_error(mock_create_conn, mock_transpo
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
 
 
@@ -586,7 +572,6 @@ def test_connect_secure_no_auth_method(mock_create_conn, mock_transport_cls):
             pkey=None,
             host_key_validation=True,
             timeout=None,
-            policy=None,
         )
     assert "No authentication method provided" in str(excinfo.value)
 
@@ -611,7 +596,6 @@ def test_connect_legacy_success(mock_ssh):
         pkey=None,
         host_key_validation=False,
         timeout=None,
-        policy=None,
     )
     assert result is mock_ssh_instance.open_sftp.return_value
 
@@ -634,7 +618,6 @@ def test_connect_legacy_authentication_error(mock_ssh):
             pkey=None,
             host_key_validation=False,
             timeout=None,
-            policy=None,
         )
 
 
@@ -656,7 +639,6 @@ def test_connect_legacy_general_exception(mock_ssh):
             pkey=None,
             host_key_validation=False,
             timeout=None,
-            policy=None,
         )
     assert "network fail" in str(excinfo.value)
 
@@ -681,6 +663,5 @@ def test_connect_legacy_transport_none(mock_ssh):
             pkey=None,
             host_key_validation=False,
             timeout=None,
-            policy=None,
         )
     sftp.close.assert_called_once()

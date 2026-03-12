@@ -31,7 +31,6 @@ def make_settings():
         host_key_fingerprint="dummy-fingerprint",
         host_key_validation=True,
         port=22,
-        policy=None,
     )
 
 

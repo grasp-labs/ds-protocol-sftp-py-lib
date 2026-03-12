@@ -30,7 +30,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     AuthenticationError,
     ConnectionError,
 )
-from paramiko import AutoAddPolicy, MissingHostKeyPolicy, ssh_exception
+from paramiko import AutoAddPolicy, ssh_exception
 
 logger = Logger.get_logger(__name__, package=True)
 
@@ -78,7 +78,6 @@ class Sftp:
                 pkey=None,
                 host_key_validation=True,
                 timeout=None,
-                policy=None,
             )
             files = sftp.client.listdir("/remote/path")
     """
@@ -98,7 +97,6 @@ class Sftp:
         pkey: str | None = None,
         host_key_validation: bool = True,
         timeout: float | None = None,
-        policy: MissingHostKeyPolicy | None = None,
     ) -> paramiko.SFTPClient:
         """
         Establish and return an active SFTP client connection to the remote server.
@@ -118,7 +116,6 @@ class Sftp:
             pkey (str | None): Private key in PEM format as a string, or None if not using key-based auth.
             host_key_validation (bool): Whether to perform host key validation against the provided fingerprint.
             timeout (float | None): Optional connection timeout in seconds.
-            policy (MissingHostKeyPolicy | None): Optional Paramiko host key policy to use if host key validation is disabled.
 
         Returns:
             paramiko.SFTPClient: An active SFTP client connection.
@@ -178,9 +175,7 @@ class Sftp:
                     },
                 ) from exc
         else:
-            # Legacy/less secure flow: use SSHClient and policy
-            if policy is None:
-                policy = AutoAddPolicy()
+            policy = AutoAddPolicy()
             self._ssh.set_missing_host_key_policy(policy)
             try:
                 logger.info(f"Connecting to {host}")
