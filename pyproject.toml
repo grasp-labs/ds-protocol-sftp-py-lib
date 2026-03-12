@@ -6,8 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "ds-protocol-sftp-py-lib"
 version = "0.1.0"
 description = "A Python package from the DS library collection"
-dependencies = []
-requires-python = ">=3.9"
+dependencies = [
+    "ds-resource-plugin-py-lib>=0.1.0b1,<1.0.0",
+    "ds-common-logger-py-lib>=0.1.0a5,<1.0.0",
+    "paramiko>=3.0.0,<4.0.0",
+]
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE-APACHE"]
 keywords = ["ds", "python"]
@@ -19,10 +23,10 @@ maintainers = [
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Operating System :: OS Independent",
   "Intended Audience :: Developers",
   "Topic :: Software Development :: Libraries :: Python Modules",
@@ -35,11 +39,15 @@ Repository = "https://github.com/grasp-labs/ds-protocol-sftp-py-lib/"
 Issues = "https://github.com/grasp-labs/ds-protocol-sftp-py-lib/issues/"
 Changelog = "https://github.com/grasp-labs/ds-protocol-sftp-py-lib/releases"
 
+[project.entry-points."ds.protocols"]
+sftp = "ds_protocol_sftp_py_lib"
+
 [project.optional-dependencies]
 dev = [
     "bandit>=1.7.0",
     "ruff>=0.1.8",
     "mypy>=1.7.0",
+    "types-paramiko>=3.4.0.0,<5.0.0",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.3.0",
