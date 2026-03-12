@@ -18,11 +18,10 @@ Example:
     ...         host="sftp.example.com",
     ...         username="user",
     ...         password="password123",
-    ...         encrypted_credential="encrypted_cred",
     ...         private_key=None,
     ...         passphrase=None,
     ...         timeout=30.0,
-    ...         host_key_fingerprint=None,
+    ...         host_key_fingerprint="AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf==",
     ...         host_key_validation=True,
     ...         port=22,
     ...     ),
@@ -33,17 +32,13 @@ Example:
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-from ds_common_logger_py_lib import Logger
 from ds_resource_plugin_py_lib.common.resource.linked_service import LinkedService, LinkedServiceSettings
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
 )
-from paramiko import MissingHostKeyPolicy
 
 from ..enums import ResourceType
 from ..utils.sftp.provider import Sftp
-
-logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)
@@ -54,7 +49,6 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
         host (str): SFTP server hostname.
         username (str): Username for authentication.
         password (str | None): Password for authentication.
-        encrypted_credential (str): Encrypted credential.
         private_key (str | None): Private key for authentication.
         passphrase (str | None): Passphrase for private key.
         timeout (float | None): Connection timeout in seconds.
@@ -69,32 +63,27 @@ class SftpLinkedServiceSettings(LinkedServiceSettings):
     username: str
     """Username for authentication."""
 
-    password: str | None = None
+    password: str | None = field(default=None, metadata={"mask": True})
     """Password for authentication."""
 
-    encrypted_credential: str
-    """Encrypted credential."""
-
-    private_key: str | None = None
+    private_key: str | None = field(default=None, metadata={"mask": True})
     """Private key for authentication."""
 
-    passphrase: str | None = None
+    passphrase: str | None = field(default=None, metadata={"mask": True})
     """Passphrase for private key."""
 
     timeout: float | None = None
     """Connection timeout in seconds."""
 
     host_key_fingerprint: str | None = None
-    """Expected host key fingerprint."""
+    """Expected host key fingerprint (base64-encoded MD5, as produced by
+    Paramiko's get_fingerprint(); e.g., 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdEf==')."""
 
     host_key_validation: bool = True
     """Whether to validate host key."""
 
     port: int = 22
     """SFTP server port."""
-
-    policy: MissingHostKeyPolicy | None = None
-    """Host key policy to use if host key validation is disabled."""
 
 
 SftpLinkedServiceSettingsType = TypeVar("SftpLinkedServiceSettingsType", bound=SftpLinkedServiceSettings)
@@ -176,13 +165,12 @@ class SftpLinkedService(
             pkey=self.settings.private_key,
             host_key_validation=self.settings.host_key_validation,
             timeout=self.settings.timeout,
-            policy=self.settings.policy,
         )
 
     def test_connection(self) -> tuple[bool, str]:
         """Perform a lightweight health check against the SFTP backend.
 
-        Uses getcwd to verify connectivity without modifying data.
+        Uses the SFTP client's listdir method to check connectivity and authentication.
 
         Returns:
             tuple[bool, str]:
@@ -193,14 +181,11 @@ class SftpLinkedService(
             self.connect()
             if self._sftp is None:
                 return False, "SFTP connection is not initialized after connect()"
-            # Lightweight health check: get current working directory
-            cwd = self._sftp.client.getcwd()
-            if cwd is not None:
+            directory = self._sftp.client.listdir(".")
+            if directory is not None:
                 return True, "Connection successfully tested"
-            else:
-                return False, "Could not get current working directory"
         except Exception as exc:
-            return False, str(exc)
+            return False, f"Failed to connect to SFTP server, error: {exc}"
 
     def close(self) -> None:
         """Close the linked service.
