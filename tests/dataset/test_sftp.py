@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError
+from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 
 from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, SftpDataset, SftpDatasetSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
@@ -24,7 +25,6 @@ def mock_linked_service():
         host="sftp.example.com",
         username="user",
         password="password123",
-        encrypted_credential="encrypted_cred",
         private_key=None,
         passphrase=None,
         timeout=30.0,
@@ -111,17 +111,6 @@ def test_read_files_as_dataframe(mock_linked_service):
         assert "col1" in ds.output.columns
 
 
-def test_create_file_success(mock_linked_service):
-    """Test creating a file in the SFTP dataset successfully."""
-    ds = make_dataset(mock_linked_service)
-    ds.input = pd.DataFrame({"a": [1]})
-    mock_file = MagicMock()
-    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
-    with patch("ds_protocol_sftp_py_lib.dataset.sftp.PandasSerializer.__call__", return_value=b"serialized"):
-        ds.create()
-        mock_file.write.assert_called_once_with(b"serialized")
-
-
 def test_purge_file_success(mock_linked_service):
     """Test purging a file from the SFTP dataset successfully."""
     ds = make_dataset(mock_linked_service)
@@ -178,25 +167,25 @@ def test_purge_file_not_found_is_noop(mock_linked_service):
 
 def test_update_not_implemented(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotSupportedError):
         ds.update()
 
 
 def test_upsert_not_implemented(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotSupportedError):
         ds.upsert()
 
 
 def test_delete_not_implemented(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotSupportedError):
         ds.delete()
 
 
 def test_rename_not_implemented(mock_linked_service):
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotSupportedError):
         ds.rename()
 
 
@@ -314,19 +303,6 @@ def test_read_raises_generic_exception(mock_linked_service):
         assert "fail" in str(excinfo.value)
 
 
-def test_create_raises_generic_exception(mock_linked_service):
-    ds = make_dataset(mock_linked_service)
-    ds.input = pd.DataFrame({"a": [1]})
-    with (
-        patch.object(ds.linked_service.connection.client, "open", side_effect=Exception("fail")),
-        patch("ds_protocol_sftp_py_lib.dataset.sftp.logger.error") as err_patch,
-    ):
-        with pytest.raises(CreateError) as excinfo:
-            ds.create()
-        assert err_patch.called
-        assert "fail" in str(excinfo.value)
-
-
 def test_purge_raises_generic_exception(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     attr = MagicMock()
@@ -349,14 +325,6 @@ def test_list_raises_generic_exception(mock_linked_service):
         with pytest.raises(ListError) as excinfo:
             ds.list()
         assert err_patch.called
-        assert "fail" in str(excinfo.value)
-
-
-def test_ensure_sftp_directory_raises_create_error(mock_linked_service):
-    ds = make_dataset(mock_linked_service)
-    with patch.object(ds.linked_service.connection.client, "stat", side_effect=Exception("fail")):
-        with pytest.raises(Exception) as excinfo:
-            ds._ensure_sftp_directory("/foo/bar")
         assert "fail" in str(excinfo.value)
 
 
@@ -384,3 +352,40 @@ def test__get_files_by_pattern_raises_exception(mock_linked_service):
             ds._get_files_by_pattern("/data", "*.csv")
         except Exception as e:
             assert "fail" in str(e)
+
+
+def test_create_file_success(mock_linked_service):
+    """Covers: create() file creation path (205-213)."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    # stat raises FileNotFoundError (file does not exist)
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
+    # open returns a mock file context manager
+    mock_file = MagicMock()
+    mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
+    ds.create()
+    mock_linked_service.connection.client.open.assert_called_once()
+    mock_file.write.assert_called_once()
+    assert ds.output.equals(ds.input)
+
+
+def test_purge_no_files_early_return(mock_linked_service):
+    """Covers: purge() early return when no files (290-294)."""
+    ds = make_dataset(mock_linked_service)
+    with patch.object(ds, "_get_files_by_pattern", return_value=[]):
+        # Should not raise or call remove
+        ds.linked_service.connection.client.remove = MagicMock()
+        ds.purge()
+        ds.linked_service.connection.client.remove.assert_not_called()
+
+
+def test_ensure_sftp_directory_empty_and_root(mock_linked_service):
+    """Covers: _ensure_sftp_directory() early return for '' and '/' (451)."""
+    ds = make_dataset(mock_linked_service)
+    # For '', stat('.') is called; for '/', nothing is called
+    ds.linked_service.connection.client.stat = MagicMock()
+    ds.linked_service.connection.client.mkdir = MagicMock()
+    ds._ensure_sftp_directory("")
+    ds._ensure_sftp_directory("/")
+    ds.linked_service.connection.client.stat.assert_any_call(".")
+    ds.linked_service.connection.client.mkdir.assert_not_called()

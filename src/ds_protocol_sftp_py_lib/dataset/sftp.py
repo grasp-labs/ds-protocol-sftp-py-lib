@@ -55,6 +55,7 @@ from ds_resource_plugin_py_lib.common.resource.dataset import (
     TabularDataset,
 )
 from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError
+from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
 from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
 from paramiko import SFTPAttributes
@@ -169,33 +170,48 @@ class SftpDataset(
         """
         Create data on the SFTP server.
 
-        Args:
-            kwargs: Additional arguments for creating the dataset.
+        Note:
+            This method is **not idempotent**. If called multiple times with the same parameters,
+            it will raise a CreateError if the file already exists. If a network or server error
+            occurs after the file is created but before the method returns, retrying may result
+            in a CreateError due to the file's existence. Orchestration and retry policies should
+            account for this non-idempotent behavior.
+
+        Returns:
+            None
 
         Raises:
-            CreateError: If there is an error creating the dataset on the SFTP server.
+            CreateError: If there is an error creating the dataset on the SFTP server, or if the file already exists.
         """
         try:
-            if self.input is None:
-                logger.info("No input data provided.")  # type: ignore
+            if self.input is None or self.input.empty:
+                logger.info("No input data provided.")
                 return
 
             remote_path = self._get_folder_and_file_path()
+
+            try:
+                self.linked_service.connection.client.stat(remote_path)
+                raise CreateError(
+                    message=f"File already exists at path: {remote_path} on SFTP server.",
+                    status_code=409,
+                    details={
+                        "folder_path": self.settings.folder_path,
+                        "file_name": self.settings.file_name,
+                        "settings": self.settings.serialize(),
+                    },
+                )
+            except FileNotFoundError:
+                logger.info(f"File does not exist at path: {remote_path} on SFTP server. Proceeding with creation.")
+                pass
+
+            self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
+
             with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
                 logger.info(f"Creating file on SFTP server: {remote_path}")
                 remote_file.write(self.serializer(self.input))
+            self.output = self.input.copy()
 
-        except FileNotFoundError as exc:
-            logger.error("Target folder not found on SFTP server, cannot create file.")
-            raise CreateError(
-                message="Target folder not found on SFTP server, cannot create file.",
-                status_code=404,
-                details={
-                    "folder_path": self.settings.folder_path,
-                    "file_name": self.settings.file_name,
-                    "settings": self.settings.serialize(),
-                },
-            ) from exc
         except Exception as exc:
             logger.error(f"Error creating file on SFTP server: {exc}")
             raise CreateError(
@@ -208,13 +224,52 @@ class SftpDataset(
             ) from exc
 
     def update(self) -> None:
-        raise NotImplementedError("Update operation is not supported for SftpDataset.")
+        """
+        Update operation is not supported for in this provider.
+
+        Returns:
+            None
+
+        Raises:
+            NotSupportedError: Always raised since update is not supported for SftpDataset.
+        """
+        logger.error("Update operation is not supported by SftpDataset.")
+        raise NotSupportedError(
+            message="Method 'update' is not supported by SftpDataset.",
+            details={"method": "update", "provider": self.type.value},
+        )
 
     def upsert(self) -> None:
-        raise NotImplementedError("Upsert operation is not supported for SftpDataset.")
+        """
+        Upsert operation is not supported for in this provider.
+
+        Returns:
+            None
+
+        Raises:
+            NotSupportedError: Always raised since upsert is not supported for SftpDataset.
+        """
+        logger.error("Upsert operation is not supported by SftpDataset.")
+        raise NotSupportedError(
+            message="Method 'upsert' is not supported by SftpDataset.",
+            details={"method": "upsert", "provider": self.type.value},
+        )
 
     def delete(self) -> None:
-        raise NotImplementedError("Delete operation is not supported for SftpDataset.")
+        """
+        Delete operation is not supported for in this provider.
+
+        Returns:
+            None
+
+        Raises:
+            NotSupportedError: Always raised since delete is not supported for SftpDataset.
+        """
+        logger.error("Delete operation is not supported by SftpDataset.")
+        raise NotSupportedError(
+            message="Method 'delete' is not supported by SftpDataset.",
+            details={"method": "delete", "provider": self.type.value},
+        )
 
     def purge(self) -> None:
         """
@@ -261,7 +316,7 @@ class SftpDataset(
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
-                    "settings": self.settings.list.serialize(),
+                    "settings": self.settings.serialize(),
                 },
             ) from exc
 
@@ -282,6 +337,9 @@ class SftpDataset(
                 fnmatch_pattern=self.settings.file_name,
             )
             self.output = self._list_directory_files(files)
+
+            if self.output.empty or "file_name" not in self.output.columns:
+                return
 
             if self.settings.list.download:
                 logger.info("Downloading file content as part of listing operation.")
@@ -313,7 +371,20 @@ class SftpDataset(
             ) from exc
 
     def rename(self) -> None:
-        raise NotImplementedError("Rename operation is not yet implemented for SftpDataset.")
+        """
+        Rename operation is not supported for in this provider.
+
+        Returns:
+            None
+
+        Raises:
+            NotSupportedError: Always raised since rename is not supported for SftpDataset.
+        """
+        logger.error("Rename operation is not supported by SftpDataset.")
+        raise NotSupportedError(
+            message="Method 'rename' is not supported by SftpDataset.",
+            details={"method": "rename", "provider": self.type.value},
+        )
 
     def close(self) -> None:
         """
@@ -377,6 +448,9 @@ class SftpDataset(
 
         Returns:
             None
+
+        Raises:
+            CreateError: If the maximum directory depth is exceeded while ensuring the SFTP directory.
         """
         remote_directory = posixpath.normpath(remote_directory)
         if not remote_directory or remote_directory == "/":
@@ -470,4 +544,4 @@ class SftpDataset(
             dfs.append(df)
         if not dfs:
             return pd.DataFrame()
-        return pd.concat(dfs)
+        return pd.concat(dfs, ignore_index=True)
