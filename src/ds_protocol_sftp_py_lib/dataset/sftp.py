@@ -54,7 +54,7 @@ from ds_resource_plugin_py_lib.common.resource.dataset import (
     DatasetStorageFormatType,
     TabularDataset,
 )
-from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError
+from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError, UpsertError
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
 from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
@@ -123,7 +123,8 @@ class SftpDataset(
         Read files from the SFTP server.
 
         Returns:
-            None: The output is stored in the `output` attribute as a DataFrame containing the
+            None: The output is stored in the `output` attribute as a DataFrame containing
+            the contents of the matched files.
 
         Raises:
             ReadError: If there is an error reading from the SFTP dataset.
@@ -145,9 +146,12 @@ class SftpDataset(
                 self.output = self._read_files_as_dataframe(files)
 
         except FileNotFoundError as exc:
-            logger.error(f"File: {self.settings.file_name} not found in folder: {self.settings.folder_path} on SFTP server.")
+            logger.error(
+                f"Folder: {self.settings.folder_path} not found on SFTP server while looking for file: {self.settings.file_name}."
+            )
             raise ReadError(
-                message=f"File: {self.settings.file_name} not found in folder: {self.settings.folder_path} on SFTP server.",
+                message=f"Folder: {self.settings.folder_path} not found on SFTP server while looking for "
+                f"file: {self.settings.file_name}.",
                 status_code=404,
                 details={
                     "folder_path": self.settings.folder_path,
@@ -190,8 +194,16 @@ class SftpDataset(
 
             remote_path = self._get_folder_and_file_path()
 
-            try:
-                self.linked_service.connection.client.stat(remote_path)
+            self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
+
+            with self.linked_service.connection.client.open(filename=remote_path, mode="xb") as remote_file:
+                logger.info(f"Creating file on SFTP server: {remote_path}")
+                remote_file.write(self.serializer(self.input))
+            self.output = self.input.copy()
+
+        except OSError as exc:
+            if exc.errno == 17:
+                logger.error(f"File already exists at path: {remote_path} on SFTP server.")
                 raise CreateError(
                     message=f"File already exists at path: {remote_path} on SFTP server.",
                     status_code=409,
@@ -200,17 +212,17 @@ class SftpDataset(
                         "file_name": self.settings.file_name,
                         "settings": self.settings.serialize(),
                     },
-                )
-            except FileNotFoundError:
-                logger.info(f"File does not exist at path: {remote_path} on SFTP server. Proceeding with creation.")
-                pass
-
-            self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
-
-            with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
-                logger.info(f"Creating file on SFTP server: {remote_path}")
-                remote_file.write(self.serializer(self.input))
-            self.output = self.input.copy()
+                ) from exc
+            else:
+                logger.error(f"OS error occurred while creating file on SFTP server: {exc}")
+                raise CreateError(
+                    message=f"OS error occurred while creating file on SFTP server: {exc}",
+                    details={
+                        "folder_path": self.settings.folder_path,
+                        "file_name": self.settings.file_name,
+                        "settings": self.settings.serialize(),
+                    },
+                ) from exc
 
         except Exception as exc:
             logger.error(f"Error creating file on SFTP server: {exc}")
@@ -241,19 +253,38 @@ class SftpDataset(
 
     def upsert(self) -> None:
         """
-        Upsert operation is not supported for in this provider.
+        Upsert a file on the SFTP server. If the file already exists, it will be overwritten.
 
         Returns:
             None
 
         Raises:
-            NotSupportedError: Always raised since upsert is not supported for SftpDataset.
+            UpsertError: If there is an error upserting the dataset on the SFTP server.
         """
-        logger.error("Upsert operation is not supported by SftpDataset.")
-        raise NotSupportedError(
-            message="Method 'upsert' is not supported by SftpDataset.",
-            details={"method": "upsert", "provider": self.type.value},
-        )
+        try:
+            if self.input is None or self.input.empty:
+                logger.info("No input data provided.")
+                return
+
+            remote_path = self._get_folder_and_file_path()
+
+            self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
+
+            with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
+                logger.info(f"Upserting file to SFTP server: {remote_path}")
+                remote_file.write(self.serializer(self.input))
+            self.output = self.input.copy()
+
+        except Exception as exc:
+            logger.error(f"Error upserting file to SFTP server: {exc}")
+            raise UpsertError(
+                message=f"Error upserting file to SFTP server: {exc}",
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "settings": self.settings.serialize(),
+                },
+            ) from exc
 
     def delete(self) -> None:
         """
@@ -306,7 +337,7 @@ class SftpDataset(
                         details={
                             "folder_path": self.settings.folder_path,
                             "file_name": self.settings.file_name,
-                            "settings": self.settings.list.serialize(),
+                            "settings": self.settings.serialize(),
                         },
                     ) from exc
         except Exception as exc:

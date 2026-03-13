@@ -1,21 +1,30 @@
 """
-**File**: `04_dataset_purge.py`
-**Region**: `examples/04_dataset_purge`
+**File**: `06_dataset_upsert.py`
+**Region**: `examples/06_dataset_upsert`
 
-Example 04: Purge an Sftp dataset.
+Example 06: Upsert an Sftp dataset.
 """
 import logging
 from uuid import uuid4
 
+import pandas as pd
 from ds_common_logger_py_lib import Logger
-from ds_protocol_sftp_py_lib.dataset.sftp import SftpDataset, SftpDatasetSettings
+from ds_protocol_sftp_py_lib.dataset.sftp import SftpDataset, SftpDatasetSettings, ListSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
 Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__, package=True)
 
+
 def main():
-    """Main function to demonstrate purging an SFTP dataset."""
+    """Main function to demonstrate upserting an SFTP dataset."""
+    data = pd.DataFrame(
+        [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+        ]
+    )
+
     dataset = SftpDataset(
         id=str(uuid4()),
         name="SFTP Dataset",
@@ -39,9 +48,10 @@ def main():
         ),
     )
 
+    dataset.input = data
     dataset.linked_service.connect()
-    dataset.purge()
-    logger.info("Purged dataset at %s/%s", dataset.settings.folder_path, dataset.settings.file_name)
+    dataset.upsert()
+    logger.info("Upserted dataset at %s/%s", dataset.settings.folder_path, dataset.settings.file_name)
     logger.info("Output:\n%s", dataset.output)
 
 if __name__ == "__main__":

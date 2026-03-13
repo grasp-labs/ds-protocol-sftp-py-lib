@@ -4,13 +4,16 @@
 
 Example 05: List Sftp datasets.
 """
+import logging
 from uuid import uuid4
 
 from ds_common_logger_py_lib import Logger
 from ds_protocol_sftp_py_lib.dataset.sftp import SftpDataset, SftpDatasetSettings, ListSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
+Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__, package=True)
+
 
 def main():
     """Main function to demonstrate listing SFTP datasets."""
@@ -27,18 +30,17 @@ def main():
                 port=22,
                 username="",
                 password="",
-                encrypted_credential="",
-                host_key_validation=False,
-                host_key_fingerprint=None,
+                host_key_validation=True,
+                host_key_fingerprint="",
            ),
+        ),
         settings=SftpDatasetSettings(
-            folder_path="",
-            file_name="",
+            folder_path="test-folder",
+            file_name="test*",
             list=ListSettings(
                 download=True
             ),
-        )
-        )
+        ),
     )
 
     dataset.linked_service.connect()

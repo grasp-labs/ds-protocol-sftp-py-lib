@@ -4,11 +4,13 @@
 
 Example 01: Connect to Sftp with Paramiko through Linked Service.
 """
+import logging
 from uuid import uuid4
 
 from ds_common_logger_py_lib import Logger
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
+Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__, package=True)
 
 def main():
