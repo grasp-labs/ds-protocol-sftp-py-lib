@@ -39,6 +39,7 @@ Example:
 """
 
 import builtins
+import errno
 import fnmatch
 import mimetypes
 import posixpath
@@ -54,13 +55,20 @@ from ds_resource_plugin_py_lib.common.resource.dataset import (
     DatasetStorageFormatType,
     TabularDataset,
 )
-from ds_resource_plugin_py_lib.common.resource.dataset.errors import CreateError, ListError, PurgeError, ReadError, UpsertError
+from ds_resource_plugin_py_lib.common.resource.dataset.errors import (
+    CreateError,
+    ListError,
+    PurgeError,
+    ReadError,
+    UpsertError,
+)
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
 from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
 from paramiko import SFTPAttributes
 
 from ..enums import ResourceType
+from ..errors import FileExistsError
 from ..linked_service.sftp import SftpLinkedService
 
 logger = Logger.get_logger(__name__, package=True)
@@ -187,22 +195,22 @@ class SftpDataset(
         Raises:
             CreateError: If there is an error creating the dataset on the SFTP server, or if the file already exists.
         """
+        remote_path = self._get_folder_and_file_path()
         try:
             if self.input is None or self.input.empty:
                 logger.info("No input data provided.")
                 return
 
-            remote_path = self._get_folder_and_file_path()
-
             self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
+            self._ensure_file_does_not_exist(remote_path=remote_path)
 
-            with self.linked_service.connection.client.open(filename=remote_path, mode="xb") as remote_file:
+            with self.linked_service.connection.client.open(filename=remote_path, mode="wb") as remote_file:
                 logger.info(f"Creating file on SFTP server: {remote_path}")
                 remote_file.write(self.serializer(self.input))
             self.output = self.input.copy()
 
         except OSError as exc:
-            if exc.errno == 17:
+            if exc.errno == errno.EEXIST:
                 logger.error(f"File already exists at path: {remote_path} on SFTP server.")
                 raise CreateError(
                     message=f"File already exists at path: {remote_path} on SFTP server.",
@@ -213,10 +221,11 @@ class SftpDataset(
                         "settings": self.settings.serialize(),
                     },
                 ) from exc
-            else:
-                logger.error(f"OS error occurred while creating file on SFTP server: {exc}")
+            if exc.errno in (errno.EACCES, errno.EPERM):
+                logger.error(f"Permission denied while creating file on SFTP server: {exc}")
                 raise CreateError(
-                    message=f"OS error occurred while creating file on SFTP server: {exc}",
+                    message=f"Unauthorized to create file at path: {remote_path} on SFTP server.",
+                    status_code=403,
                     details={
                         "folder_path": self.settings.folder_path,
                         "file_name": self.settings.file_name,
@@ -224,10 +233,21 @@ class SftpDataset(
                     },
                 ) from exc
 
+            logger.error(f"OS error occurred while creating file on SFTP server: {exc}")
+            raise CreateError(
+                message=f"OS error occurred while creating file on SFTP server: {exc}",
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "settings": self.settings.serialize(),
+                },
+            ) from exc
+
         except Exception as exc:
             logger.error(f"Error creating file on SFTP server: {exc}")
             raise CreateError(
                 message=f"Error creating file on SFTP server: {exc}",
+                status_code=getattr(exc, "status_code", 500),
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
@@ -437,6 +457,29 @@ class SftpDataset(
         """
         folder_posix = PureWindowsPath(self.settings.folder_path).as_posix()
         return posixpath.join(folder_posix, self.settings.file_name)
+
+    def _ensure_file_does_not_exist(self, remote_path: str) -> None:
+        """
+        Ensure the target file does not already exist on the SFTP server.
+
+        Args:
+            remote_path (str): Full target file path on the SFTP server.
+
+        Raises:
+            FileExistsError: If the target file already exists.
+        """
+        try:
+            self.linked_service.connection.client.stat(remote_path)
+            raise FileExistsError(
+                message=f"File already exists at path: {remote_path} on SFTP server.",
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "settings": self.settings.serialize(),
+                },
+            )
+        except FileNotFoundError:
+            return
 
     def _list_directory(self, path: str) -> builtins.list[SFTPAttributes]:
         """
