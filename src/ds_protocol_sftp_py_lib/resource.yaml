@@ -1,0 +1,17 @@
+package-name: sftp
+name: sftp
+description: SFTP protocol for the DS Business Workflow
+
+dataset:
+  - name: SFTP
+    type: ds.resource.dataset.sftp
+    version: 1.0.0
+    description: SFTP dataset
+    class_name: ds_protocol_sftp_py_lib.dataset.sftp.SftpDataset
+
+linked_service:
+  - name: SFTP
+    type: ds.resource.linked-service.sftp
+    version: 1.0.0
+    description: SFTP linked service
+    class_name: ds_protocol_sftp_py_lib.linked_service.sftp.SftpLinkedService
