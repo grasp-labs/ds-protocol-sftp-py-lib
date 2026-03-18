@@ -386,9 +386,8 @@ def test_create_file_success(mock_linked_service):
     mock_linked_service.connection.client.open.return_value.__enter__.return_value = mock_file
     ds.create()
     mock_linked_service.connection.client.open.assert_called_once()
-    # Check that open was called with mode="xb"
     args, kwargs = mock_linked_service.connection.client.open.call_args
-    assert kwargs.get("mode") == "xb" or (len(args) > 1 and args[1] == "xb")
+    assert kwargs.get("mode") == "wb" or (len(args) > 1 and args[1] == "wb")
     mock_file.write.assert_called_once()
     assert ds.output.equals(ds.input)
 
@@ -397,12 +396,50 @@ def test_create_file_already_exists_raises_create_error(mock_linked_service):
     """Covers: create() file creation path when file already exists (214-223)."""
     ds = make_dataset(mock_linked_service)
     ds.input = pd.DataFrame({"a": [1]})
-    # open raises OSError with errno.EEXIST
-    err = OSError()
-    err.errno = errno.EEXIST
-    mock_linked_service.connection.client.open.side_effect = err
+    # stat succeeds, indicating file exists
+    mock_linked_service.connection.client.stat.return_value = MagicMock()
     with pytest.raises(CreateError):
         ds.create()
+    mock_linked_service.connection.client.open.assert_not_called()
+
+
+def test_create_file_open_race_eexist_raises_conflict(mock_linked_service):
+    """Covers: create() open-time EEXIST race branch."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
+    err = OSError("already exists")
+    err.errno = errno.EEXIST
+    mock_linked_service.connection.client.open.side_effect = err
+    with pytest.raises(CreateError) as excinfo:
+        ds.create()
+    assert excinfo.value.status_code == 409
+
+
+def test_create_file_open_permission_denied_raises_403(mock_linked_service):
+    """Covers: create() permission denied branch."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
+    err = OSError("access denied")
+    err.errno = errno.EACCES
+    mock_linked_service.connection.client.open.side_effect = err
+    with pytest.raises(CreateError) as excinfo:
+        ds.create()
+    assert excinfo.value.status_code == 403
+
+
+def test_create_file_open_generic_oserror_raises_create_error(mock_linked_service):
+    """Covers: create() generic OSError branch."""
+    ds = make_dataset(mock_linked_service)
+    ds.input = pd.DataFrame({"a": [1]})
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
+    err = OSError("io failure")
+    err.errno = errno.EIO
+    mock_linked_service.connection.client.open.side_effect = err
+    with pytest.raises(CreateError) as excinfo:
+        ds.create()
+    assert "OS error occurred while creating file on SFTP server" in str(excinfo.value)
 
 
 def test_purge_no_files_early_return(mock_linked_service):
@@ -431,6 +468,7 @@ def test_create_raises_generic_exception(mock_linked_service):
     """Test that create() raises a CreateError when an unexpected exception occurs."""
     ds = make_dataset(mock_linked_service)
     ds.input = pd.DataFrame({"a": [1]})
+    mock_linked_service.connection.client.stat.side_effect = FileNotFoundError
     mock_linked_service.connection.client.open.side_effect = Exception("fail-create")
     with pytest.raises(CreateError) as excinfo:
         ds.create()
