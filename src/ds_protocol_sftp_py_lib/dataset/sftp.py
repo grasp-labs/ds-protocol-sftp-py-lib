@@ -454,12 +454,12 @@ class SftpDataset(
         except FileNotFoundError as exc:
             logger.error(f"File to rename not found at path: {remote_path} on SFTP server.")
             raise RenameError(
-                message=f"Directory: {self.settings.folder_path} not found on SFTP server.",
+                message=f"File not found at path: {remote_path} on SFTP server.",
                 status_code=404,
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
-                    "settings": self.settings.list.serialize(),
+                    "settings": self.settings.rename.serialize(),
                 },
             ) from exc
         except Exception as exc:
@@ -469,6 +469,7 @@ class SftpDataset(
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
+                    "new_path": self.settings.rename.new_path,
                     "new_file_name": self.settings.rename.new_file_name,
                     "settings": self.settings.rename.serialize(),
                 },
