@@ -17,11 +17,12 @@ from ds_resource_plugin_py_lib.common.resource.dataset.errors import (
     ListError,
     PurgeError,
     ReadError,
+    RenameError,
     UpsertError,
 )
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 
-from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, SftpDataset, SftpDatasetSettings
+from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, RenameSettings, SftpDataset, SftpDatasetSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
 
@@ -53,6 +54,10 @@ def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", do
         folder_path=folder_path,
         file_name=file_name,
         list=ListSettings(download=download),
+        rename=RenameSettings(
+            new_path=folder_path,
+            new_file_name=file_name,
+        ),
     )
     return SftpDataset(
         id="12345678-90ab-cdef-1234-567890abcdef",
@@ -186,11 +191,45 @@ def test_delete_not_implemented(mock_linked_service):
         ds.delete()
 
 
-def test_rename_not_implemented(mock_linked_service):
-    """Test that renaming a file in the SFTP dataset raises a NotSupportedError."""
+def test_rename_file_success(mock_linked_service):
+    """Test renaming a file in the SFTP dataset successfully."""
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotSupportedError):
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+
+    ds.rename()
+
+    ds.linked_service.connection.client.rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+
+
+def test_rename_file_not_found_raises_rename_error(mock_linked_service):
+    """Test that rename() raises RenameError when source file is not found."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "missing.csv"
+    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.rename.side_effect = FileNotFoundError
+
+    with pytest.raises(RenameError) as excinfo:
         ds.rename()
+
+    assert excinfo.value.status_code == 404
+
+
+def test_rename_file_raises_generic_exception(mock_linked_service):
+    """Test that rename() raises RenameError on unexpected errors."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.rename.side_effect = Exception("rename-failed")
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert "rename-failed" in str(excinfo.value)
 
 
 def test_close_calls_linked_service_close(mock_linked_service):

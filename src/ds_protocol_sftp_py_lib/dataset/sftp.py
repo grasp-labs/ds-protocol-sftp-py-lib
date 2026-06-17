@@ -60,6 +60,7 @@ from ds_resource_plugin_py_lib.common.resource.dataset.errors import (
     ListError,
     PurgeError,
     ReadError,
+    RenameError,
     UpsertError,
 )
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
@@ -83,6 +84,17 @@ class ListSettings(Serializable):
 
 
 @dataclass(kw_only=True)
+class RenameSettings(Serializable):
+    """Settings for renaming files in the SFTP dataset."""
+
+    new_path: str
+    """The new path to use when renaming a file in the SFTP dataset."""
+
+    new_file_name: str
+    """The new file name to use when renaming a file in the SFTP dataset."""
+
+
+@dataclass(kw_only=True)
 class SftpDatasetSettings(DatasetSettings):
     """Settings for the SFTP dataset."""
 
@@ -94,6 +106,9 @@ class SftpDatasetSettings(DatasetSettings):
 
     list: ListSettings = field(default_factory=ListSettings)
     """Settings for listing the SFTP dataset."""
+
+    rename: RenameSettings = field(default_factory=lambda: RenameSettings(new_path="", new_file_name=""))
+    """Settings for renaming files in the SFTP dataset."""
 
 
 SftpDatasetSettingsType = TypeVar(
@@ -423,19 +438,41 @@ class SftpDataset(
 
     def rename(self) -> None:
         """
-        Rename operation is not supported for in this provider.
+        Rename a file on the SFTP server.
 
         Returns:
             None
 
         Raises:
-            NotSupportedError: Always raised since rename is not supported for SftpDataset.
+            RenameError: If there is an error renaming the file on the SFTP server.
         """
-        logger.error("Rename operation is not supported by SftpDataset.")
-        raise NotSupportedError(
-            message="Method 'rename' is not supported by SftpDataset.",
-            details={"method": "rename", "provider": self.type.value},
-        )
+        try:
+            remote_path = self._get_folder_and_file_path()
+            new_remote_path = posixpath.join(self.settings.rename.new_path, self.settings.rename.new_file_name)
+            logger.info(f"Renaming file on SFTP server from {remote_path} to {new_remote_path}")
+            self.linked_service.connection.client.rename(remote_path, new_remote_path)
+        except FileNotFoundError as exc:
+            logger.error(f"File to rename not found at path: {remote_path} on SFTP server.")
+            raise RenameError(
+                message=f"Directory: {self.settings.folder_path} not found on SFTP server.",
+                status_code=404,
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "settings": self.settings.list.serialize(),
+                },
+            ) from exc
+        except Exception as exc:
+            logger.error(f"Error renaming file on SFTP server: {exc}")
+            raise RenameError(
+                message=f"Error renaming file on SFTP server: {exc}",
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "new_file_name": self.settings.rename.new_file_name,
+                    "settings": self.settings.rename.serialize(),
+                },
+            ) from exc
 
     def close(self) -> None:
         """
