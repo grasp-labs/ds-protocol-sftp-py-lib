@@ -55,7 +55,7 @@ def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", do
         file_name=file_name,
         list=ListSettings(download=download),
         rename=RenameSettings(
-            new_path=folder_path,
+            new_folder_path=folder_path,
             new_file_name=file_name,
         ),
     )
@@ -196,7 +196,7 @@ def test_rename_file_success(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     ds.settings.folder_path = "/data/src"
     ds.settings.file_name = "old.csv"
-    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
 
     ds.rename()
 
@@ -211,7 +211,7 @@ def test_rename_file_not_found_raises_rename_error(mock_linked_service):
     ds = make_dataset(mock_linked_service)
     ds.settings.folder_path = "/data/src"
     ds.settings.file_name = "missing.csv"
-    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
     ds.linked_service.connection.client.rename.side_effect = FileNotFoundError
 
     with pytest.raises(RenameError) as excinfo:
@@ -223,13 +223,62 @@ def test_rename_file_not_found_raises_rename_error(mock_linked_service):
 def test_rename_file_raises_generic_exception(mock_linked_service):
     """Test that rename() raises RenameError on unexpected errors."""
     ds = make_dataset(mock_linked_service)
-    ds.settings.rename = RenameSettings(new_path="/data/dst", new_file_name="new.csv")
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
     ds.linked_service.connection.client.rename.side_effect = Exception("rename-failed")
 
     with pytest.raises(RenameError) as excinfo:
         ds.rename()
 
     assert "rename-failed" in str(excinfo.value)
+
+
+def test_rename_file_overwrite_uses_posix_rename(mock_linked_service):
+    """Test that rename() uses posix_rename when overwrite is enabled and supported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+
+    ds.rename()
+
+    ds.linked_service.connection.client.posix_rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+    ds.linked_service.connection.client.rename.assert_not_called()
+
+
+def test_rename_file_without_overwrite_existing_target_raises_rename_error(mock_linked_service):
+    """Test that overwrite=False surfaces target-exists failures as RenameError."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=False)
+    ds.linked_service.connection.client.rename.side_effect = OSError("target already exists")
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert "target already exists" in str(excinfo.value)
+    ds.linked_service.connection.client.rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+
+
+def test_rename_with_wildcard_destination_raises_rename_error(mock_linked_service):
+    """Test that wildcard destination names are rejected for single-file rename."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new_*.csv", overwrite=False)
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert "Wildcard characters are not supported" in str(excinfo.value)
+    ds.linked_service.connection.client.rename.assert_not_called()
+    ds.linked_service.connection.client.posix_rename.assert_not_called()
 
 
 def test_close_calls_linked_service_close(mock_linked_service):
