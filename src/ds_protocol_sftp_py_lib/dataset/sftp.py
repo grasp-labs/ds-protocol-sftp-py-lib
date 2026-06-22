@@ -476,10 +476,19 @@ class SftpDataset(
                 try:
                     self.linked_service.connection.client.posix_rename(remote_path, new_remote_path)
                 except OSError as exc:
-                    if "unsupported" not in str(exc).lower():
+                    if "unsupported" in str(exc).lower():
                         raise
-                    logger.warning("SFTP server does not support posix_rename. Falling back to standard rename operation.")
-                    self.linked_service.connection.client.rename(remote_path, new_remote_path)
+                    logger.error("SFTP server does not support posix_rename.")
+                    raise RenameError(
+                        message=f"SFTP server does not support atomic rename operation: {exc}",
+                        details={
+                            "folder_path": self.settings.folder_path,
+                            "file_name": self.settings.file_name,
+                            "new_folder_path": self.settings.rename.new_folder_path,
+                            "new_file_name": self.settings.rename.new_file_name,
+                            "settings": self.settings.rename.serialize(),
+                        },
+                    ) from exc
             else:
                 self.linked_service.connection.client.rename(remote_path, new_remote_path)
         except FileNotFoundError as exc:
