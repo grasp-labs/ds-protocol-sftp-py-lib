@@ -477,18 +477,18 @@ class SftpDataset(
                     self.linked_service.connection.client.posix_rename(remote_path, new_remote_path)
                 except OSError as exc:
                     if "unsupported" in str(exc).lower():
-                        raise
-                    logger.error("SFTP server does not support posix_rename.")
-                    raise RenameError(
-                        message=f"SFTP server does not support atomic rename operation: {exc}",
-                        details={
-                            "folder_path": self.settings.folder_path,
-                            "file_name": self.settings.file_name,
-                            "new_folder_path": self.settings.rename.new_folder_path,
-                            "new_file_name": self.settings.rename.new_file_name,
-                            "settings": self.settings.rename.serialize(),
-                        },
-                    ) from exc
+                        logger.error("SFTP server does not support posix_rename.")
+                        raise RenameError(
+                            message=f"SFTP server does not support atomic rename operation: {exc}",
+                            details={
+                                "folder_path": self.settings.folder_path,
+                                "file_name": self.settings.file_name,
+                                "new_folder_path": self.settings.rename.new_folder_path,
+                                "new_file_name": self.settings.rename.new_file_name,
+                                "settings": self.settings.rename.serialize(),
+                            },
+                        ) from exc
+                    raise
             else:
                 self.linked_service.connection.client.rename(remote_path, new_remote_path)
         except FileNotFoundError as exc:
@@ -502,6 +502,8 @@ class SftpDataset(
                     "settings": self.settings.rename.serialize(),
                 },
             ) from exc
+        except RenameError:
+            raise
         except Exception as exc:
             logger.error(f"Error renaming file on SFTP server: {exc}")
             raise RenameError(

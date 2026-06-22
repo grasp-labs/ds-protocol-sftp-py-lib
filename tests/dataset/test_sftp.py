@@ -295,6 +295,7 @@ def test_rename_with_wildcard_destination_raises_rename_error(mock_linked_servic
     with pytest.raises(RenameError) as excinfo:
         ds.rename()
 
+    assert excinfo.value.status_code == 400
     assert "Wildcard characters are not supported" in str(excinfo.value)
     ds.linked_service.connection.client.rename.assert_not_called()
     ds.linked_service.connection.client.posix_rename.assert_not_called()
