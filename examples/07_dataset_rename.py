@@ -47,8 +47,9 @@ def main():
             folder_path="integration",
             file_name="test.json",
             rename=RenameSettings(
-                new_path="integration/success",
-                new_file_name="test.json"
+                new_folder_path="integration/success",
+                new_file_name="test.json",
+                overwrite=False
             ),
         ),
     )
@@ -56,7 +57,7 @@ def main():
     dataset.input = data
     dataset.linked_service.connect()
     dataset.rename()
-    logger.info("Renamed dataset from %s/%s to %s/%s", dataset.settings.folder_path, dataset.settings.file_name, dataset.settings.rename.new_path, dataset.settings.rename.new_file_name)
+    logger.info("Renamed dataset from %s/%s to %s/%s", dataset.settings.folder_path, dataset.settings.file_name, dataset.settings.rename.new_folder_path, dataset.settings.rename.new_file_name)
     logger.info("Output:\n%s", dataset.output)
 
 

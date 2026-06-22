@@ -248,6 +248,26 @@ def test_rename_file_overwrite_uses_posix_rename(mock_linked_service):
     ds.linked_service.connection.client.rename.assert_not_called()
 
 
+def test_rename_file_overwrite_falls_back_when_posix_rename_unsupported(mock_linked_service):
+    """Test that overwrite rename falls back to standard rename when posix_rename is unsupported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    ds.linked_service.connection.client.posix_rename.side_effect = OSError("Operation unsupported")
+
+    ds.rename()
+
+    ds.linked_service.connection.client.posix_rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+    ds.linked_service.connection.client.rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+
+
 def test_rename_file_without_overwrite_existing_target_raises_rename_error(mock_linked_service):
     """Test that overwrite=False surfaces target-exists failures as RenameError."""
     ds = make_dataset(mock_linked_service)

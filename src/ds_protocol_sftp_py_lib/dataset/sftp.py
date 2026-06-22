@@ -473,7 +473,13 @@ class SftpDataset(
             logger.info(f"Renaming file on SFTP server from {remote_path} to {new_remote_path}")
 
             if self.settings.rename.overwrite:
-                self.linked_service.connection.client.posix_rename(remote_path, new_remote_path)
+                try:
+                    self.linked_service.connection.client.posix_rename(remote_path, new_remote_path)
+                except OSError as exc:
+                    if "unsupported" not in str(exc).lower():
+                        raise
+                    logger.warning("SFTP server does not support posix_rename. Falling back to standard rename operation.")
+                    self.linked_service.connection.client.rename(remote_path, new_remote_path)
             else:
                 self.linked_service.connection.client.rename(remote_path, new_remote_path)
         except FileNotFoundError as exc:
