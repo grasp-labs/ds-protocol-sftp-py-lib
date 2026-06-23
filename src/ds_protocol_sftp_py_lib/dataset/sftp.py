@@ -213,7 +213,7 @@ class SftpDataset(
         Raises:
             CreateError: If there is an error creating the dataset on the SFTP server, or if the file already exists.
         """
-        remote_path = self._get_folder_and_file_path()
+        remote_path = self._get_folder_and_file_path(self.settings.folder_path, self.settings.file_name)
         try:
             if self.input is None or self.input.empty:
                 logger.info("No input data provided.")
@@ -304,7 +304,7 @@ class SftpDataset(
                 logger.info("No input data provided.")
                 return
 
-            remote_path = self._get_folder_and_file_path()
+            remote_path = self._get_folder_and_file_path(self.settings.folder_path, self.settings.file_name)
 
             self._ensure_sftp_directory(remote_directory=self.settings.folder_path)
 
@@ -449,48 +449,51 @@ class SftpDataset(
         Raises:
             RenameError: If there is an error renaming the file on the SFTP server.
         """
-        try:
-            remote_path = self._get_folder_and_file_path()
-            if any(char in self.settings.rename.new_file_name for char in "*?[]"):
-                raise RenameError(
-                    message=(
-                        "Wildcard characters are not supported in 'new_file_name' for rename operation: "
-                        f"{self.settings.rename.new_file_name}"
-                    ),
-                    status_code=400,
-                    details={
-                        "folder_path": self.settings.folder_path,
-                        "file_name": self.settings.file_name,
-                        "new_folder_path": self.settings.rename.new_folder_path,
-                        "new_file_name": self.settings.rename.new_file_name,
-                        "settings": self.settings.rename.serialize(),
-                    },
-                )
-            new_remote_path = posixpath.join(
-                PureWindowsPath(self.settings.rename.new_folder_path).as_posix(),
-                self.settings.rename.new_file_name,
-            )
-            logger.info(f"Renaming file on SFTP server from {remote_path} to {new_remote_path}")
+        remote_path = self._get_folder_and_file_path(self.settings.folder_path, self.settings.file_name)
+        new_remote_path = self._get_folder_and_file_path(
+            self.settings.rename.new_folder_path,
+            self.settings.rename.new_file_name,
+        )
 
+        if any(char in self.settings.rename.new_file_name for char in "*?[]"):
+            raise RenameError(
+                message=(
+                    "Wildcard characters are not supported in 'new_file_name' for rename operation: "
+                    f"{self.settings.rename.new_file_name}"
+                ),
+                status_code=400,
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "new_folder_path": self.settings.rename.new_folder_path,
+                    "new_file_name": self.settings.rename.new_file_name,
+                    "settings": self.settings.rename.serialize(),
+                },
+            )
+
+        logger.info(f"Renaming file on SFTP server from {remote_path} to {new_remote_path}")
+
+        if not self.settings.rename.overwrite and self._remote_path_exists(new_remote_path):
+            raise RenameError(
+                message=(
+                    f"Cannot rename to '{new_remote_path}': destination already exists. Set rename.overwrite=True to replace it."
+                ),
+                status_code=409,
+                details={
+                    "folder_path": self.settings.folder_path,
+                    "file_name": self.settings.file_name,
+                    "new_folder_path": self.settings.rename.new_folder_path,
+                    "new_file_name": self.settings.rename.new_file_name,
+                    "settings": self.settings.rename.serialize(),
+                },
+            )
+
+        try:
+            client = self.linked_service.connection.client
             if self.settings.rename.overwrite:
-                try:
-                    self.linked_service.connection.client.posix_rename(remote_path, new_remote_path)
-                except OSError as exc:
-                    if "unsupported" in str(exc).lower():
-                        logger.error("SFTP server does not support posix_rename.")
-                        raise RenameError(
-                            message=f"SFTP server does not support atomic rename operation: {exc}",
-                            details={
-                                "folder_path": self.settings.folder_path,
-                                "file_name": self.settings.file_name,
-                                "new_folder_path": self.settings.rename.new_folder_path,
-                                "new_file_name": self.settings.rename.new_file_name,
-                                "settings": self.settings.rename.serialize(),
-                            },
-                        ) from exc
-                    raise
+                client.posix_rename(remote_path, new_remote_path)
             else:
-                self.linked_service.connection.client.rename(remote_path, new_remote_path)
+                client.rename(remote_path, new_remote_path)
         except FileNotFoundError as exc:
             logger.error(f"File to rename not found at path: {remote_path} on SFTP server.")
             raise RenameError(
@@ -499,15 +502,23 @@ class SftpDataset(
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
+                    "new_folder_path": self.settings.rename.new_folder_path,
+                    "new_file_name": self.settings.rename.new_file_name,
                     "settings": self.settings.rename.serialize(),
                 },
             ) from exc
-        except RenameError:
-            raise
         except Exception as exc:
-            logger.error(f"Error renaming file on SFTP server: {exc}")
+            if isinstance(exc, OSError) and self.settings.rename.overwrite and "unsupported" in str(exc).lower():
+                logger.error("SFTP server does not support posix_rename.")
+                message = f"SFTP server does not support atomic rename operation: {exc}"
+                status_code = 501
+            else:
+                logger.error(f"Error renaming file on SFTP server from {remote_path} to {new_remote_path}: {exc}")
+                message = f"Error renaming file from {remote_path} to {new_remote_path} on SFTP server: {exc}"
+                status_code = getattr(exc, "status_code", 500)
             raise RenameError(
-                message=f"Error renaming file on SFTP server: {exc}",
+                message=message,
+                status_code=status_code,
                 details={
                     "folder_path": self.settings.folder_path,
                     "file_name": self.settings.file_name,
@@ -526,17 +537,39 @@ class SftpDataset(
         """
         self.linked_service.close()
 
-    def _get_folder_and_file_path(self) -> str:
+    @staticmethod
+    def _get_folder_and_file_path(folder_path: str, file_name: str) -> str:
         """
-        Get combined path of folder_path and file_name, using forward slashes.
-        This ensures consistent path formatting across Windows, Linux, and macOS.
-        It also replaces any Windows-style backslashes with forward slashes.
+        Combine a folder path and file name into a POSIX-style remote path.
+
+        Normalizes Windows-style backslashes to forward slashes so paths are
+        consistent across operating systems before being sent to the SFTP server.
+
+        Args:
+            folder_path (str): Directory path on the SFTP server.
+            file_name (str): File name within the directory.
 
         Returns:
-            str: The full file path as a POSIX-style string.
+            str: The combined remote file path using forward slashes.
         """
-        folder_posix = PureWindowsPath(self.settings.folder_path).as_posix()
-        return posixpath.join(folder_posix, self.settings.file_name)
+        folder_posix = PureWindowsPath(folder_path).as_posix()
+        return posixpath.join(folder_posix, file_name)
+
+    def _remote_path_exists(self, remote_path: str) -> bool:
+        """
+        Check whether a file or directory exists at the given remote path.
+
+        Args:
+            remote_path (str): Full path on the SFTP server to check.
+
+        Returns:
+            bool: True if the path exists, False if it does not.
+        """
+        try:
+            self.linked_service.connection.client.stat(remote_path)
+            return True
+        except FileNotFoundError:
+            return False
 
     def _ensure_file_does_not_exist(self, remote_path: str) -> None:
         """
@@ -548,18 +581,17 @@ class SftpDataset(
         Raises:
             FileExistsError: If the target file already exists.
         """
-        try:
-            self.linked_service.connection.client.stat(remote_path)
-            raise FileExistsError(
-                message=f"File already exists at path: {remote_path} on SFTP server.",
-                details={
-                    "folder_path": self.settings.folder_path,
-                    "file_name": self.settings.file_name,
-                    "settings": self.settings.serialize(),
-                },
-            )
-        except FileNotFoundError:
+        if not self._remote_path_exists(remote_path):
             return
+
+        raise FileExistsError(
+            message=f"File already exists at path: {remote_path} on SFTP server.",
+            details={
+                "folder_path": self.settings.folder_path,
+                "file_name": self.settings.file_name,
+                "settings": self.settings.serialize(),
+            },
+        )
 
     def _list_directory(self, path: str) -> builtins.list[SFTPAttributes]:
         """

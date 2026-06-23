@@ -197,6 +197,7 @@ def test_rename_file_success(mock_linked_service):
     ds.settings.folder_path = "/data/src"
     ds.settings.file_name = "old.csv"
     ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
 
     ds.rename()
 
@@ -212,6 +213,7 @@ def test_rename_file_not_found_raises_rename_error(mock_linked_service):
     ds.settings.folder_path = "/data/src"
     ds.settings.file_name = "missing.csv"
     ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
     ds.linked_service.connection.client.rename.side_effect = FileNotFoundError
 
     with pytest.raises(RenameError) as excinfo:
@@ -224,6 +226,7 @@ def test_rename_file_raises_generic_exception(mock_linked_service):
     """Test that rename() raises RenameError on unexpected errors."""
     ds = make_dataset(mock_linked_service)
     ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
     ds.linked_service.connection.client.rename.side_effect = Exception("rename-failed")
 
     with pytest.raises(RenameError) as excinfo:
@@ -264,25 +267,24 @@ def test_rename_file_overwrite_unsupported_posix_rename_raises_rename_error(mock
         "/data/dst/new.csv",
     )
     ds.linked_service.connection.client.rename.assert_not_called()
+    assert excinfo.value.status_code == 501
     assert "Operation unsupported" in str(excinfo.value)
 
 
 def test_rename_file_without_overwrite_existing_target_raises_rename_error(mock_linked_service):
-    """Test that overwrite=False surfaces target-exists failures as RenameError."""
+    """Test that overwrite=False raises RenameError when destination already exists."""
     ds = make_dataset(mock_linked_service)
     ds.settings.folder_path = "/data/src"
     ds.settings.file_name = "old.csv"
     ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=False)
-    ds.linked_service.connection.client.rename.side_effect = OSError("target already exists")
+    ds.linked_service.connection.client.stat.return_value = MagicMock()
 
     with pytest.raises(RenameError) as excinfo:
         ds.rename()
 
-    assert "target already exists" in str(excinfo.value)
-    ds.linked_service.connection.client.rename.assert_called_once_with(
-        "/data/src/old.csv",
-        "/data/dst/new.csv",
-    )
+    assert excinfo.value.status_code == 409
+    assert "destination already exists" in str(excinfo.value)
+    ds.linked_service.connection.client.rename.assert_not_called()
 
 
 def test_rename_with_wildcard_destination_raises_rename_error(mock_linked_service):
@@ -312,9 +314,8 @@ def test_close_calls_linked_service_close(mock_linked_service):
 def test_get_folder_and_file_path(mock_linked_service):
     """Test that _get_folder_and_file_path returns the correct folder and file path."""
     ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")
-    result = ds._get_folder_and_file_path()
-    assert "foo/bar" in str(result)
-    assert "baz.txt" in str(result)
+    result = ds._get_folder_and_file_path(ds.settings.folder_path, ds.settings.file_name)
+    assert result == "/foo/bar/baz.txt"
 
 
 def test_ensure_sftp_directory_normal(mock_linked_service):
