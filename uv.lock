@@ -590,7 +590,7 @@ wheels = [
 
 [[package]]
 name = "ds-protocol-sftp-py-lib"
-version = "0.1.0a3"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ds-common-logger-py-lib" },

@@ -17,11 +17,12 @@ from ds_resource_plugin_py_lib.common.resource.dataset.errors import (
     ListError,
     PurgeError,
     ReadError,
+    RenameError,
     UpsertError,
 )
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 
-from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, SftpDataset, SftpDatasetSettings
+from ds_protocol_sftp_py_lib.dataset.sftp import ListSettings, RenameSettings, SftpDataset, SftpDatasetSettings
 from ds_protocol_sftp_py_lib.linked_service.sftp import SftpLinkedService, SftpLinkedServiceSettings
 
 
@@ -53,6 +54,10 @@ def make_dataset(mock_linked_service, folder_path="/data", file_name="*.csv", do
         folder_path=folder_path,
         file_name=file_name,
         list=ListSettings(download=download),
+        rename=RenameSettings(
+            new_folder_path=folder_path,
+            new_file_name=file_name,
+        ),
     )
     return SftpDataset(
         id="12345678-90ab-cdef-1234-567890abcdef",
@@ -186,11 +191,151 @@ def test_delete_not_implemented(mock_linked_service):
         ds.delete()
 
 
-def test_rename_not_implemented(mock_linked_service):
-    """Test that renaming a file in the SFTP dataset raises a NotSupportedError."""
+def test_rename_file_success(mock_linked_service):
+    """Test renaming a file in the SFTP dataset successfully."""
     ds = make_dataset(mock_linked_service)
-    with pytest.raises(NotSupportedError):
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
+
+    ds.rename()
+
+    ds.linked_service.connection.client.rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+
+
+def test_rename_file_not_found_raises_rename_error(mock_linked_service):
+    """Test that rename() raises RenameError when source file is not found."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "missing.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
+    ds.linked_service.connection.client.rename.side_effect = FileNotFoundError
+
+    with pytest.raises(RenameError) as excinfo:
         ds.rename()
+
+    assert excinfo.value.status_code == 404
+
+
+def test_rename_file_raises_generic_exception(mock_linked_service):
+    """Test that rename() raises RenameError on unexpected errors."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv")
+    ds.linked_service.connection.client.stat.side_effect = FileNotFoundError
+    ds.linked_service.connection.client.rename.side_effect = Exception("rename-failed")
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert "rename-failed" in str(excinfo.value)
+
+
+def test_rename_file_overwrite_uses_posix_rename(mock_linked_service):
+    """Test that rename() uses posix_rename when overwrite is enabled and supported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+
+    ds.rename()
+
+    ds.linked_service.connection.client.posix_rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+    ds.linked_service.connection.client.rename.assert_not_called()
+
+
+def test_rename_file_overwrite_unsupported_posix_rename_raises_rename_error(mock_linked_service):
+    """Test that overwrite rename raises RenameError when posix_rename is unsupported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    ds.linked_service.connection.client.posix_rename.side_effect = OSError("Operation unsupported")
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    ds.linked_service.connection.client.posix_rename.assert_called_once_with(
+        "/data/src/old.csv",
+        "/data/dst/new.csv",
+    )
+    ds.linked_service.connection.client.rename.assert_not_called()
+    assert excinfo.value.status_code == 501
+    assert "Operation unsupported" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("unsupported_errno", [errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS])
+def test_rename_file_overwrite_unsupported_posix_rename_by_errno_raises_rename_error(mock_linked_service, unsupported_errno):
+    """Test that overwrite rename raises RenameError when posix_rename errno indicates unsupported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    err = OSError("posix_rename failed")
+    err.errno = unsupported_errno
+    ds.linked_service.connection.client.posix_rename.side_effect = err
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 501
+    assert "posix_rename failed" in str(excinfo.value)
+
+
+def test_rename_file_overwrite_other_oserror_raises_generic_rename_error(mock_linked_service):
+    """Test that unrelated OSError errno values are not treated as unsupported posix_rename."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    err = OSError("disk full")
+    err.errno = errno.ENOSPC
+    ds.linked_service.connection.client.posix_rename.side_effect = err
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 500
+    assert "disk full" in str(excinfo.value)
+
+
+def test_rename_file_without_overwrite_existing_target_raises_rename_error(mock_linked_service):
+    """Test that overwrite=False raises RenameError when destination already exists."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=False)
+    ds.linked_service.connection.client.stat.return_value = MagicMock()
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 409
+    assert "destination already exists" in str(excinfo.value)
+    ds.linked_service.connection.client.rename.assert_not_called()
+
+
+def test_rename_with_wildcard_destination_raises_rename_error(mock_linked_service):
+    """Test that wildcard destination names are rejected for single-file rename."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new_*.csv", overwrite=False)
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 400
+    assert "Wildcard characters are not supported" in str(excinfo.value)
+    ds.linked_service.connection.client.rename.assert_not_called()
+    ds.linked_service.connection.client.posix_rename.assert_not_called()
 
 
 def test_close_calls_linked_service_close(mock_linked_service):
@@ -204,9 +349,15 @@ def test_close_calls_linked_service_close(mock_linked_service):
 def test_get_folder_and_file_path(mock_linked_service):
     """Test that _get_folder_and_file_path returns the correct folder and file path."""
     ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")
-    result = ds._get_folder_and_file_path()
-    assert "foo/bar" in str(result)
-    assert "baz.txt" in str(result)
+    result = ds._get_folder_and_file_path(ds.settings.folder_path, ds.settings.file_name)
+    assert result == "/foo/bar/baz.txt"
+
+
+def test_get_folder_and_file_path_normalizes_windows_separators(mock_linked_service):
+    """Test that _get_folder_and_file_path normalizes backslashes in folder_path and file_name."""
+    ds = make_dataset(mock_linked_service)
+    result = ds._get_folder_and_file_path(r"foo\bar", r"subdir\baz.txt")
+    assert result == "foo/bar/subdir/baz.txt"
 
 
 def test_ensure_sftp_directory_normal(mock_linked_service):
