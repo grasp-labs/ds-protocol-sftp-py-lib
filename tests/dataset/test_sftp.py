@@ -353,6 +353,13 @@ def test_get_folder_and_file_path(mock_linked_service):
     assert result == "/foo/bar/baz.txt"
 
 
+def test_get_folder_and_file_path_normalizes_windows_separators(mock_linked_service):
+    """Test that _get_folder_and_file_path normalizes backslashes in folder_path and file_name."""
+    ds = make_dataset(mock_linked_service)
+    result = ds._get_folder_and_file_path(r"foo\bar", r"subdir\baz.txt")
+    assert result == "foo/bar/subdir/baz.txt"
+
+
 def test_ensure_sftp_directory_normal(mock_linked_service):
     """Test that _ensure_sftp_directory creates the directory when it does not exist."""
     ds = make_dataset(mock_linked_service, folder_path="/foo/bar", file_name="baz.txt")

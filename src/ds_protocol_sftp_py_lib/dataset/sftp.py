@@ -542,18 +542,20 @@ class SftpDataset(
         """
         Combine a folder path and file name into a POSIX-style remote path.
 
-        Normalizes Windows-style backslashes to forward slashes so paths are
-        consistent across operating systems before being sent to the SFTP server.
+        Normalizes Windows-style backslashes to forward slashes in both
+        ``folder_path`` and ``file_name`` so paths are consistent across
+        operating systems before being sent to the SFTP server.
 
         Args:
             folder_path (str): Directory path on the SFTP server.
-            file_name (str): File name within the directory.
+            file_name (str): File name (or relative path segment) within the directory.
 
         Returns:
             str: The combined remote file path using forward slashes.
         """
         folder_posix = PureWindowsPath(folder_path).as_posix()
-        return posixpath.join(folder_posix, file_name)
+        file_name_posix = PureWindowsPath(file_name).as_posix()
+        return posixpath.join(folder_posix, file_name_posix)
 
     @staticmethod
     def _is_unsupported_posix_rename(exc: BaseException) -> bool:
