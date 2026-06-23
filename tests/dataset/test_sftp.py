@@ -271,6 +271,41 @@ def test_rename_file_overwrite_unsupported_posix_rename_raises_rename_error(mock
     assert "Operation unsupported" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("unsupported_errno", [errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS])
+def test_rename_file_overwrite_unsupported_posix_rename_by_errno_raises_rename_error(mock_linked_service, unsupported_errno):
+    """Test that overwrite rename raises RenameError when posix_rename errno indicates unsupported."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    err = OSError("posix_rename failed")
+    err.errno = unsupported_errno
+    ds.linked_service.connection.client.posix_rename.side_effect = err
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 501
+    assert "posix_rename failed" in str(excinfo.value)
+
+
+def test_rename_file_overwrite_other_oserror_raises_generic_rename_error(mock_linked_service):
+    """Test that unrelated OSError errno values are not treated as unsupported posix_rename."""
+    ds = make_dataset(mock_linked_service)
+    ds.settings.folder_path = "/data/src"
+    ds.settings.file_name = "old.csv"
+    ds.settings.rename = RenameSettings(new_folder_path="/data/dst", new_file_name="new.csv", overwrite=True)
+    err = OSError("disk full")
+    err.errno = errno.ENOSPC
+    ds.linked_service.connection.client.posix_rename.side_effect = err
+
+    with pytest.raises(RenameError) as excinfo:
+        ds.rename()
+
+    assert excinfo.value.status_code == 500
+    assert "disk full" in str(excinfo.value)
+
+
 def test_rename_file_without_overwrite_existing_target_raises_rename_error(mock_linked_service):
     """Test that overwrite=False raises RenameError when destination already exists."""
     ds = make_dataset(mock_linked_service)

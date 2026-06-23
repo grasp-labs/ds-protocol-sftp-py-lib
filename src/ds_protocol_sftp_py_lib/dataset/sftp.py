@@ -508,7 +508,7 @@ class SftpDataset(
                 },
             ) from exc
         except Exception as exc:
-            if isinstance(exc, OSError) and self.settings.rename.overwrite and "unsupported" in str(exc).lower():
+            if self.settings.rename.overwrite and self._is_unsupported_posix_rename(exc):
                 logger.error("SFTP server does not support posix_rename.")
                 message = f"SFTP server does not support atomic rename operation: {exc}"
                 status_code = 501
@@ -554,6 +554,28 @@ class SftpDataset(
         """
         folder_posix = PureWindowsPath(folder_path).as_posix()
         return posixpath.join(folder_posix, file_name)
+
+    @staticmethod
+    def _is_unsupported_posix_rename(exc: BaseException) -> bool:
+        """
+        Determine whether an exception indicates that posix_rename is unavailable.
+
+        SFTP servers and client libraries surface this failure in different ways:
+        some set a standard ``OSError.errno``, others only provide a human-readable
+        message. This helper checks errno values first, then falls back to common
+        message phrases.
+
+        Args:
+            exc (BaseException): The exception raised by posix_rename.
+
+        Returns:
+            bool: True if the error likely means posix_rename is not supported.
+        """
+        if isinstance(exc, OSError) and exc.errno in (errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS):
+            return True
+        message = str(exc).lower()
+        unsupported_phrases = ("unsupported", "not supported", "not implemented")
+        return any(phrase in message for phrase in unsupported_phrases)
 
     def _remote_path_exists(self, remote_path: str) -> bool:
         """
